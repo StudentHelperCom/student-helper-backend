@@ -18,6 +18,10 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/doc', app, document);
 
+  app.enableCors({
+    origin: true,
+  });
+
   await app.listen(port);
   console.log(`API Gateway running on http://localhost:${port}/api/doc#/`);
 }

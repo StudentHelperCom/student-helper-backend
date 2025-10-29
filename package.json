@@ -10,6 +10,7 @@
     "check-types": "turbo run check-types"
   },
   "devDependencies": {
+    "@types/node": "^24.9.2",
     "prettier": "^3.6.2",
     "turbo": "^2.5.8",
     "typescript": "5.9.2"
@@ -23,6 +24,15 @@
     "packages/*"
   ],
   "dependencies": {
-    "@nestjs/microservices": "^11.1.6"
+    "@nestjs/microservices": "^11.1.6",
+    "canvas": "^3.2.0",
+    "node-tesseract-ocr": "^2.2.1",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
+    "pdf-poppler": "^0.2.3",
+    "pdf2pic": "^3.2.0",
+    "pdfjs-dist": "^5.4.296",
+    "sharp": "^0.34.4",
+    "tesseract.js": "^6.0.1"
   }
 }
