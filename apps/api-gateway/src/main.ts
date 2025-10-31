@@ -6,7 +6,7 @@ import { ConfigService } from '@nestjs/config';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
-  const port = configService.get('APP_PORT') || 3000;
+  const port = process.env.PORT || 3000;
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Student Helper API')
@@ -22,7 +22,7 @@ async function bootstrap() {
     origin: true,
   });
 
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   console.log(`API Gateway running on http://localhost:${port}/api/doc#/`);
 }
 bootstrap();
