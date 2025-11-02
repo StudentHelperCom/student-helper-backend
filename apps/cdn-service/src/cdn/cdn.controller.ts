@@ -1,15 +1,19 @@
-import { Controller } from '@nestjs/common';
-import { MessagePattern } from '@nestjs/microservices';
+import { Controller, Post, Body } from '@nestjs/common';
 import { CdnService } from './cdn.service';
 
-@Controller()
+@Controller('cdn')
 export class CdnController {
   constructor(private readonly cdnService: CdnService) {}
 
-  @MessagePattern('upload_file')
-  async handleUpload(data: { filename: string; content: string }) {
+  @Post('upload')
+  async uploadFile(@Body() data: { filename: string; content: string }) {
+    // Convert the base64 file content back to binary
     const buffer = Buffer.from(data.content, 'base64');
-    return this.cdnService.saveFile({ filename: data.filename, content: buffer });
-}
-
+    
+    // Use your existing logic to save the file
+    return this.cdnService.saveFile({
+      filename: data.filename,
+      content: buffer,
+    });
+  }
 }
