@@ -61,16 +61,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Register a new user' })
   @ApiBody({ type: AuthDto })
   async register(@Body() body: AuthDto) {
-    // Add /api prefix to match your auth service configuration
-    const userServiceUrl = `${process.env.USERS_URL || 'http://localhost:3002'}/api/auth/register`;
+    const userServiceUrl = `${process.env.AUTH_URL || 'http://localhost:3002'}/auth/register`;
 
     const payload = {
       login: body.login,
       password: body.password
     };
-
-    console.log('🔍 [Gateway] Sending request to:', userServiceUrl);
-    console.log('🔍 [Gateway] Payload:', payload);
 
     try {
       const response = await firstValueFrom(
@@ -81,10 +77,9 @@ export class AuthController {
           }
         }),
       );
-      console.log('✅ [Gateway] Success response:', response.data);
       return response.data;
     } catch (error) {
-      console.error('❌ [Gateway] Full error details:', {
+      console.error('Full error details:', {
         message: error.message,
         response: error.response?.data,
         status: error.response?.status,
@@ -98,15 +93,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Login user' })
   @ApiBody({ type: AuthDto })
   async login(@Body() body: AuthDto) {
-    // Add /api prefix here too
-    const userServiceUrl = `${process.env.USERS_URL || 'http://localhost:3002'}/api/auth/login`;
+    const userServiceUrl = `${process.env.AUTH_URL || 'http://localhost:3002'}/auth/login`;
 
     const payload = {
       login: body.login,
       password: body.password
     };
-
-    console.log('🔍 [Gateway] Sending request to:', userServiceUrl);
 
     try {
       const response = await firstValueFrom(
@@ -119,7 +111,7 @@ export class AuthController {
       );
       return response.data;
     } catch (error) {
-      console.error('❌ [Gateway] Login error:', error.response?.data || error.message);
+      console.error('Login error:', error.response?.data || error.message);
       throw new BadRequestException('Failed to log in');
     }
 }

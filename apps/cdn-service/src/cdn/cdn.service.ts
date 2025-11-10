@@ -8,8 +8,8 @@ const execAsync = promisify(exec);
 
 @Injectable()
 export class CdnService {
-  private uploadDir = path.join(process.cwd(), process.env.UPLOAD_DIR || 'uploads');
-  private processedDir = path.join(process.cwd(), process.env.PROCESSED_DIR || 'processed');
+  private uploadDir = path.join(process.cwd(), 'uploads');
+  private processedDir = path.join(process.cwd(), 'processed');
 
   private tesseractConfig = {
     lang: 'eng+pol',
