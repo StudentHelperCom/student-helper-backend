@@ -3,6 +3,10 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 const execAsync = promisify(exec);
 
@@ -17,43 +21,87 @@ export class CdnService {
     psm: 12,
   };
 
+  private s3 = new S3Client({
+    region: process.env.AWS_REGION,
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+    },
+  });
+
+  private bucket = process.env.AWS_S3_BUCKET!;
+
   async saveFile(data: { filename: string; content: Buffer }) {
     await fs.mkdir(this.uploadDir, { recursive: true });
     await fs.mkdir(this.processedDir, { recursive: true });
 
-    // Sanitize filename before saving
     const sanitizedFilename = this.sanitizeFilename(data.filename);
-    const filePath = path.join(this.uploadDir, sanitizedFilename);
-    await fs.writeFile(filePath, data.content);
+    const localPath = path.join(this.uploadDir, sanitizedFilename);
+
+    // still write temporarily to disk for OCR/pdf tools
+    await fs.writeFile(localPath, data.content);
 
     const ext = path.extname(sanitizedFilename).toLowerCase();
 
+    let result;
     if (ext === '.pdf') {
-      return this.processPdfHybrid(filePath, sanitizedFilename);
+      result = await this.processPdfHybrid(localPath, sanitizedFilename);
     } else if (['.jpg', '.jpeg', '.png', '.tiff'].includes(ext)) {
-      return this.processImage(filePath, sanitizedFilename);
+      result = await this.processImage(localPath, sanitizedFilename);
+    } else {
+      result = { message: 'File saved successfully', filename: sanitizedFilename };
     }
 
-    return { 
-      message: 'File saved successfully', 
-      path: filePath,
-      filename: sanitizedFilename 
-    };
+    // Upload the original file to S3
+    await this.uploadToS3(`uploads/${sanitizedFilename}`, data.content);
+
+    // If processed text exists, upload it too
+    if (result.textFile) {
+      const textContent = await fs.readFile(result.textFile, 'utf8');
+      const s3TextKey = `processed/${path.basename(result.textFile)}`;
+      await this.uploadToS3(s3TextKey, Buffer.from(textContent, 'utf8'));
+      result.s3TextUrl = this.getPublicUrl(s3TextKey);
+    }
+
+    // Return URLs instead of local paths
+    result.s3OriginalUrl = this.getPublicUrl(`uploads/${sanitizedFilename}`);
+    return result;
   }
 
   private sanitizeFilename(filename: string): string {
-    // Remove special characters and keep only safe characters
     const baseName = path.basename(filename, path.extname(filename));
     const ext = path.extname(filename);
-    
     const safeName = baseName
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
-      .replace(/[^a-zA-Z0-9_-]/g, '_') // Replace special chars with underscore
-      .replace(/_+/g, '_') // Replace multiple underscores with single
-      .substring(0, 100); // Limit length
-    
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .substring(0, 100);
     return safeName + ext.toLowerCase();
+  }
+
+  private async uploadToS3(key: string, content: Buffer) {
+    await this.s3.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: content,
+        ContentType: this.getMimeType(key),
+      }),
+    );
+  }
+
+  private getPublicUrl(key: string) {
+    return `https://${this.bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+  }
+
+  private getMimeType(key: string): string {
+    const ext = path.extname(key).toLowerCase();
+    if (ext === '.pdf') return 'application/pdf';
+    if (ext === '.txt') return 'text/plain';
+    if (ext === '.png') return 'image/png';
+    if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+    return 'application/octet-stream';
   }
 
   private async processPdfHybrid(pdfPath: string, originalFilename: string) {
@@ -61,13 +109,11 @@ export class CdnService {
     const txtPath = path.join(this.processedDir, `${baseName}.txt`);
 
     try {
-      // Use pdftotext with UTF-8 encoding and safe paths
       await execAsync(`pdftotext -layout -enc UTF-8 "${pdfPath}" "${txtPath}"`);
       const text = (await fs.readFile(txtPath, 'utf8')).trim();
 
-      // If text is too short, fallback to OCR
       if (!text || text.length < 10) {
-        console.warn('Selectable PDF seems empty → falling back to OCR');
+        console.warn('Empty PDF → fallback to OCR');
         return this.processPdfWithOCR(pdfPath, originalFilename);
       }
 
@@ -78,41 +124,32 @@ export class CdnService {
         filename: originalFilename 
       };
     } catch (err) {
-      console.warn('pdftotext failed → falling back to OCR:', err.message);
+      console.warn('pdftotext failed → fallback to OCR:', err.message);
       return this.processPdfWithOCR(pdfPath, originalFilename);
     }
   }
 
   private async processPdfWithOCR(pdfPath: string, originalFilename: string) {
-    const outputDir = this.uploadDir; // Use upload dir for temp files
+    const outputDir = this.uploadDir;
     const baseName = path.basename(originalFilename, '.pdf');
 
     try {
-      // Use direct poppler commands instead of pdf-poppler package
       const popplerPath = path.join(process.cwd(), 'node_modules', 'pdf-poppler', 'lib', 'win', 'poppler-0.51', 'bin');
       const pdftocairo = path.join(popplerPath, 'pdftocairo.exe');
-      
-      // Convert PDF to images using pdftocairo
       const outputPrefix = path.join(outputDir, baseName);
       const command = `"${pdftocairo}" -png -r 150 "${pdfPath}" "${outputPrefix}"`;
-      
       await execAsync(command);
 
-      // Find generated images
       const files = await fs.readdir(outputDir);
-      const imageFiles = files.filter(f => 
-        f.startsWith(baseName) && f.endsWith('.png')
-      ).sort();
+      const imageFiles = files.filter(f => f.startsWith(baseName) && f.endsWith('.png')).sort();
 
-      let fullText = '';
       const tesseract = await import('node-tesseract-ocr');
-      
+      let fullText = '';
+
       for (const imgFile of imageFiles) {
         const imgPath = path.join(outputDir, imgFile);
         const text = await tesseract.recognize(imgPath, this.tesseractConfig);
         fullText += text + '\n\n';
-        
-        // Clean up temporary image
         await fs.unlink(imgPath);
       }
 
@@ -125,7 +162,6 @@ export class CdnService {
         textContent: fullText,
         filename: originalFilename 
       };
-
     } catch (error) {
       console.error('PDF OCR processing failed:', error);
       throw new BadRequestException(`PDF processing failed: ${error.message}`);
@@ -134,20 +170,13 @@ export class CdnService {
 
   private async processImage(imagePath: string, originalFilename: string) {
     const baseName = path.basename(originalFilename, path.extname(originalFilename));
-    
+
     try {
       const tesseract = await import('node-tesseract-ocr');
       const text = await tesseract.recognize(imagePath, this.tesseractConfig);
-      
       const txtPath = path.join(this.processedDir, `${baseName}.txt`);
       await fs.writeFile(txtPath, text, 'utf8');
-
-      return { 
-        message: 'Image processed', 
-        textFile: txtPath, 
-        textContent: text,
-        filename: originalFilename 
-      };
+      return { message: 'Image processed', textFile: txtPath, textContent: text, filename: originalFilename };
     } catch (error) {
       console.error('Image OCR processing failed:', error);
       throw new BadRequestException(`Image processing failed: ${error.message}`);
