@@ -6,7 +6,7 @@ import { json, urlencoded } from 'express';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  const port = parseInt(process.env.AUTH_PORT || '3002', 10);
+  const port = parseInt(process.env.PORT || '3002', 10);
 
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));
