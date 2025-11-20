@@ -111,8 +111,68 @@ export class AuthController {
       );
       return response.data;
     } catch (error) {
-      console.error('Login error:', error.response?.data || error.message);
-      throw new BadRequestException('Failed to log in');
-    }
+        console.error('Login error:', error.response?.data || error.message);
+        throw new BadRequestException('Failed to log in');
+      }
+  }
 }
+
+@ApiTags('Processing')
+@Controller('processing')
+export class ProcessingController {
+  constructor(private readonly httpService: HttpService) {}
+
+  @Post('run')
+  @ApiOperation({ summary: 'Process PDF + TXT to generate a structured final PDF' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        baseName: { type: 'string', example: 'document123' }
+      },
+      required: ['baseName']
+    }
+  })
+  async runProcessing(@Body() body: { baseName: string }) {
+    if (!body?.baseName) {
+      throw new BadRequestException('baseName is required');
+    }
+
+    const processingUrl = `${process.env.PROCESSING_URL || 'http://localhost:3003'}/processing/run`;
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(processingUrl, { baseName: body.baseName }, {
+          timeout: 120000,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+
+      return response.data;
+
+    } catch (error) {
+      console.error('Processing service error:', error.response?.data || error.message);
+      throw new BadRequestException('Failed to process document');
+    }
+  }
+  @Post('merge')
+  @ApiOperation({ summary: 'Merge all final PDFs into one deduplicated PDF' })
+  async mergePdfs() {
+    const processingUrl = `${process.env.PROCESSING_URL || 'http://localhost:3003'}/processing/merge`;
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(processingUrl, {}, {
+          timeout: 120000,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+
+      return response.data;
+
+    } catch (error) {
+      console.error('Merge service error:', error.response?.data || error.message);
+      throw new BadRequestException('Failed to merge PDFs');
+    }
+  }
 }

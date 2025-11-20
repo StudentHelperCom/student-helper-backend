@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
-import { CdnController, AuthController } from './app.controller';
+import { CdnController, AuthController, ProcessingController } from './app.controller';
 
 @Module({
   imports: [
@@ -13,6 +13,6 @@ import { CdnController, AuthController } from './app.controller';
       }),
     }),
   ],
-  controllers: [CdnController, AuthController],
+  controllers: [CdnController, AuthController, ProcessingController],
 })
 export class AppModule {}
