@@ -35,11 +35,23 @@ export class ProcessingService {
 
     const aiOutput = await this.askGemini(txtBuffer, pdfBuffer);
 
-    const finalPdf = await this.buildPdf(aiOutput);
+    // Generate unique ID for final files
+    const finalId = Math.random().toString(36).substring(2, 10);
+    
+    // Create both PDF and TXT files
+    const finalPdf = await this.buildPdf(aiOutput, finalId);
+    const finalTxt = Buffer.from(aiOutput, 'utf-8');
 
-    await this.uploadFile(`final/${id}.pdf`, finalPdf);
+    // Upload both files to S3 with correct content types
+    await this.uploadFile(`final/${finalId}.pdf`, finalPdf, 'application/pdf');
+    await this.uploadFile(`final/${finalId}.txt`, finalTxt, 'text/plain; charset=utf-8');
 
-    return { status: 'ok', outputKey: `final/${id}.pdf` };
+    return { 
+      status: 'ok', 
+      finalId: finalId,
+      pdfKey: `final/${finalId}.pdf`,
+      txtKey: `final/${finalId}.txt`
+    };
   }
 
   // -----------------------------
@@ -66,17 +78,27 @@ export class ProcessingService {
     }
   }
 
-  private uploadFile(key: string, buffer: Buffer) {
+  private uploadFile(key: string, buffer: Buffer, contentType?: string) {
+    // Determine content type based on file extension if not provided
+    if (!contentType) {
+      if (key.endsWith('.pdf')) {
+        contentType = 'application/pdf';
+      } else if (key.endsWith('.txt')) {
+        contentType = 'text/plain';
+      } else {
+        contentType = 'application/octet-stream';
+      }
+    }
+
     return this.s3.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,
         Body: buffer,
-        ContentType: 'application/pdf',
+        ContentType: contentType,
       }),
     );
   }
-
 
   // -----------------------------
   // Gemini API 
@@ -179,163 +201,262 @@ export class ProcessingService {
   // -----------------------------
   // Build resulting PDF
   // -----------------------------
-  private async buildPdf(content: string): Promise<Buffer> {
-    // Create PDF and register fontkit so we can load TTF fonts
-    const pdf = await PDFDocument.create();
-    pdf.registerFontkit(fontkit);
+// -----------------------------
+// Build resulting PDF and TXT
+// -----------------------------
+private async buildPdf(content: string, id: string): Promise<Buffer> {
+  // Create PDF and register fontkit so we can load TTF fonts
+  const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
 
-    // Load Unicode-supported TTF fonts
-    const regularFontBytes = fs.readFileSync(
-      path.join(__dirname, '..', 'assets', 'fonts', 'DejaVuSans.ttf')
-    );
+  // Load Unicode-supported TTF fonts
+  const regularFontBytes = fs.readFileSync(
+    path.join(__dirname, '..', 'assets', 'fonts', 'DejaVuSans.ttf')
+  );
 
-    const font = await pdf.embedFont(regularFontBytes);
+  const font = await pdf.embedFont(regularFontBytes);
 
-    // Create first page
-    let page = pdf.addPage([595, 842]); // A4 portrait
-    const topicSize = 14;
-    const fontSize = 11;
-    const lineHeight = 14;
-    const margin = 50;
-    const maxWidth = page.getWidth() - margin * 2;
+  // Create first page
+  let page = pdf.addPage([595, 842]); // A4 portrait
+  const topicSize = 14;
+  const fontSize = 11;
+  const lineHeight = 14;
+  const margin = 50;
+  const maxWidth = page.getWidth() - margin * 2;
 
-    let x = margin;
-    let y = page.getHeight() - margin;
+  let x = margin;
+  let y = page.getHeight() - margin;
 
-    // Split into lines
-    const lines = content.split('\n').filter(line => line.trim().length > 0);
+  // Split into lines
+  const lines = content.split('\n').filter(line => line.trim().length > 0);
 
-    for (const line of lines) {
-      // Create new page if needed
-      if (y < margin + 40) {
+  for (const line of lines) {
+    // Create new page if needed
+    if (y < margin + 40) {
+      page = pdf.addPage([595, 842]);
+      y = page.getHeight() - margin;
+    }
+
+    const cleanLine = line.trim();
+
+    // Detect numbered-topic headings (e.g., "1. Something", "12. Topic name")
+    const isTopicLine = /^\d+\.\s/.test(cleanLine);
+
+    if (isTopicLine) {
+      // Draw topic title
+      if (y < page.getHeight() - margin) {
+        y -= 8;
+      }
+      page.drawText(cleanLine, {
+        x,
+        y,
+        size: topicSize,
+        font: font,
+        color: rgb(0, 0, 0),
+      });
+
+      y -= topicSize + 4;
+      continue;
+    }
+
+    // Wrap long lines
+    const wrapped = this.wrapText(cleanLine, maxWidth, font, fontSize);
+
+    for (const wLine of wrapped) {
+      if (y < margin) {
         page = pdf.addPage([595, 842]);
         y = page.getHeight() - margin;
       }
 
-      const cleanLine = line.trim();
-
-      // Detect numbered-topic headings (e.g., "1. Something", "12. Topic name")
-      const isTopicLine = /^\d+\.\s/.test(cleanLine);
-
-      if (isTopicLine) {
-        // Draw topic title
-        page.drawText(cleanLine, {
-          x,
-          y,
-          size: topicSize,
-          font: font,
-          color: rgb(0, 0, 0),
-        });
-
-        y -= topicSize + 8;
-        continue;
-      }
-
-      // Wrap long lines
-      const wrapped = this.wrapText(cleanLine, maxWidth, font, fontSize);
-
-      for (const wLine of wrapped) {
-        if (y < margin) {
-          page = pdf.addPage([595, 842]);
-          y = page.getHeight() - margin;
-        }
-
-        page.drawText(wLine, {
-          x,
-          y,
-          size: fontSize,
-          font: font,
-          color: rgb(0, 0, 0),
-        });
-
-        y -= lineHeight;
-      }
-
-      // Small spacing between paragraphs
-      y -= 4;
-    }
-
-    return Buffer.from(await pdf.save());
-  }
-
-  private wrapText(text: string, maxWidth: number, font: any, size: number): string[] {
-    const words = text.split(' ');
-    const lines: string[] = [];
-    let currentLine = '';
-
-    for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const width = font.widthOfTextAtSize(testLine, size);
-
-      if (width <= maxWidth) {
-        currentLine = testLine;
-      } else {
-        if (currentLine) {
-          lines.push(currentLine);
-        }
-        currentLine = word;
-      }
-    }
-
-    if (currentLine) {
-      lines.push(currentLine);
-    }
-
-    return lines;
-  }
-
-    /**
-   * Merge specified PDFs from /final folder into final-merged/merged.pdf
-   * Deduplicate by first line (topic name)
-   */
-  
-  async mergeFinalPdfsS3(filesToMerge?: string[]) {
-    const mergedKey = 'final-merged/merged.pdf';
-
-    // 1. Get all PDFs in S3 final/ folder
-    let s3Files: string[] = [];
-
-    if (filesToMerge?.length) {
-      s3Files = filesToMerge.map(f => `final/${f.endsWith('.pdf') ? f : `${f}.pdf`}`);
-    } else {
-      const listCommand = new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: 'final/',
+      page.drawText(wLine, {
+        x,
+        y,
+        size: fontSize,
+        font: font,
+        color: rgb(0, 0, 0),
       });
 
-      const res = await this.s3.send(listCommand);
-      s3Files = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
+      y -= lineHeight;
     }
-
-    if (!s3Files.length) {
-      return { status: 'empty', message: 'No PDFs found in S3 final/ folder' };
-    }
-
-    this.logger.log(`Merging ${s3Files.length} PDF files from S3: ${s3Files.join(', ')}`);
-
-    // 2. Merge all PDFs (no deduplication)
-    const mergedPdf = await PDFDocument.create();
-
-    for (const key of s3Files) {
-      try {
-        const fileBytes = await this.getFile(key);
-        const srcPdf = await PDFDocument.load(fileBytes);
-        const pages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
-        pages.forEach(p => mergedPdf.addPage(p));
-      } catch (error) {
-        this.logger.error(`Error adding pages from ${key}:`, error);
-      }
-    }
-
-    // 3. Save merged PDF back to S3
-    const mergedBytes = await mergedPdf.save();
-    await this.uploadFile(mergedKey, Buffer.from(mergedBytes));
-
-    return {
-      status: 'ok',
-      totalSourceFiles: s3Files.length,
-      outputKey: mergedKey,
-      mergedFiles: s3Files,
-    };
   }
+
+  return Buffer.from(await pdf.save());
+}
+
+private wrapText(text: string, maxWidth: number, font: any, size: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const width = font.widthOfTextAtSize(testLine, size);
+
+    if (width <= maxWidth) {
+      currentLine = testLine;
+    } else {
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+      currentLine = word;
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines;
+}
+
+/**
+ * Merge specified PDFs from /final folder using their corresponding TXT files
+ */
+async mergeFinalPdfsS3(filesToMerge?: string[]) {
+  // Generate random ID for the merged file
+  const mergeId = Math.random().toString(36).substring(2, 10);
+  const mergedPdfKey = `final-merged/finalmerge-${mergeId}.pdf`;
+  const mergedTxtKey = `final-merged/finalmerge-${mergeId}.txt`;
+
+  this.logger.log('Listing all PDF files in S3 final/ folder...');
+
+  const listCommand = new ListObjectsV2Command({
+    Bucket: this.bucket,
+    Prefix: 'final/',
+  });
+
+  const res = await this.s3.send(listCommand);
+  const s3PdfFiles: string[] = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
+
+  if (!s3PdfFiles.length) {
+    return { status: 'empty', message: 'No PDFs found in S3 final/ folder to merge.' };
+  }
+
+  this.logger.log(`Processing ${s3PdfFiles.length} PDF files for AI merging: ${s3PdfFiles.join(', ')}`);
+
+  // 1. Extract text content from all TXT files
+  let allTextContent = '';
+  
+  for (const pdfKey of s3PdfFiles) {
+    try {
+      // Get the corresponding TXT file
+      const txtKey = pdfKey.replace('.pdf', '.txt');
+      const txtBuffer = await this.getFile(txtKey);
+      const content = txtBuffer.toString();
+      allTextContent += `\n\n=== CONTENT FROM ${pdfKey} ===\n${content}`;
+    } catch (error) {
+      this.logger.error(`Error getting text content from ${pdfKey}:`, error);
+    }
+  }
+
+  if (!allTextContent.trim()) {
+    return { status: 'error', message: 'No text content found to merge.' };
+  }
+
+  // 2. Send to Gemini API for intelligent merging
+  const mergedContent = await this.askGeminiToMerge(allTextContent);
+
+  // 3. Create final merged PDF and TXT
+  const finalPdf = await this.buildPdf(mergedContent, mergeId);
+  const finalTxt = Buffer.from(mergedContent, 'utf-8');
+
+  // 4. Save both merged files back to S3 with correct content types
+  await this.uploadFile(mergedPdfKey, finalPdf, 'application/pdf');
+  await this.uploadFile(mergedTxtKey, finalTxt, 'text/plain; charset=utf-8');
+
+  return {
+    status: 'ok',
+    mergeId: mergeId,
+    totalSourceFiles: s3PdfFiles.length,
+    pdfKey: mergedPdfKey,
+    txtKey: mergedTxtKey,
+    mergedFiles: s3PdfFiles,
+  };
+}
+
+/**
+ * Ask Gemini to merge content intelligently
+ */
+private async askGeminiToMerge(allContent: string): Promise<string> {
+  try {
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            {
+              text: `MERGE AND DEDUPLICATE THIS EDUCATIONAL CONTENT:
+
+${allContent}
+
+YOUR TASK:
+1. Merge all the content from different sources into one coherent document
+2. Remove duplicate information - if the same topic appears multiple times, keep only one version
+3. Keep ALL original information and titles - don't change any content, text should be the same as the taken pdf. Only if there are massive duplicates remove one of the titles, DONT CHANGE ANY TEXT
+4. Renumber all topics sequentially starting from 1
+5. Maintain the same topic structure and formatting
+6. Preserve all important details, examples, and explanations
+7. Keep the output in Polish language and only, even if the language is other than the polish translate it to polish
+
+REQUIRED OUTPUT FORMAT:
+
+1. First Topic Name
+[All the original text for this topic without changes]
+
+2. Second Topic Name  
+[All the original text for this topic without changes]
+
+3. Third Topic Name
+[All the original text for this topic without changes]
+
+Continue with as many topics as needed.
+
+RULES:
+- Use ONLY numbered topics (1., 2., 3., etc.)
+- Remove duplicate topics but keep all unique information
+- Don't modify the content of topics, just remove duplicates
+- Renumber everything sequentially
+- Maintain the same plain text format
+- Keep all image descriptions and important details, and all information, text should be the same`
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 8000,
+      }
+    };
+
+    const urlWithKey = `${this.geminiUrl}?key=${this.geminiApiKey}`;
+
+    this.logger.log('Sending content to Gemini for intelligent merging...');
+    
+    const res = await axios.post(urlWithKey, requestBody, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: 120000,
+    });
+
+    // Safe response extraction
+    let resultText = '';
+    if (res.data.candidates?.[0]?.content?.parts?.[0]?.text) {
+      resultText = res.data.candidates[0].content.parts[0].text;
+    } else if (res.data.contents?.[0]?.parts?.[0]?.text) {
+      resultText = res.data.contents[0].parts[0].text;
+    } else if (res.data.text) {
+      resultText = res.data.text;
+    } else {
+      console.warn('Unexpected response structure:', res.data);
+      resultText = JSON.stringify(res.data);
+    }
+
+    this.logger.log('Content successfully merged by AI');
+    return resultText;
+
+  } catch (error) {
+    console.error('Gemini API Error during merge:', error.response?.data || error.message);
+    throw new Error(`Gemini API merge failed: ${error.response?.data?.error?.message || error.message}`);
+  }
+}
 }

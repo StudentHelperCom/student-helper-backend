@@ -11,7 +11,7 @@ export class ProcessingController {
   }
 
   @Post('merge')
-  async mergePdfs(@Body() body: { filesToMerge?: string[] }) {
-    return this.svc.mergeFinalPdfsS3(body.filesToMerge);
+  async mergePdfs() {
+    return this.svc.mergeFinalPdfsS3();
   }
 }
