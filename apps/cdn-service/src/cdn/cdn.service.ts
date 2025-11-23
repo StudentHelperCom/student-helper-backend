@@ -123,7 +123,6 @@ export class CdnService {
             return { 
                 message: 'Selectable PDF processed', 
                 textFile: txtPath, 
-                textContent: text,
                 filename: originalFilename 
             };
         } catch (err) {
@@ -165,7 +164,6 @@ export class CdnService {
             return { 
                 message: 'Scanned PDF processed with OCR', 
                 textFile: txtPath, 
-                textContent: fullText,
                 filename: originalFilename 
             };
         } catch (error) {
@@ -182,7 +180,7 @@ export class CdnService {
             const text = await tesseract.recognize(imagePath, this.tesseractConfig);
             const txtPath = path.join(this.processedDir, `${baseName}.txt`);
             await fs.writeFile(txtPath, text, 'utf8');
-            return { message: 'Image processed', textFile: txtPath, textContent: text, filename: originalFilename };
+            return { message: 'Image processed', textFile: txtPath, filename: originalFilename };
         } catch (error) {
             console.error('Image OCR processing failed:', error);
             throw new BadRequestException(`Image processing failed: ${error.message}`);

@@ -1,12 +1,12 @@
 import { 
   Controller, 
   Post, 
-  UploadedFile, 
   UseInterceptors,
   BadRequestException, 
-  Body
+  Body,
+  UploadedFiles
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -18,37 +18,36 @@ export class CdnController {
   constructor(private readonly httpService: HttpService) {}
 
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FilesInterceptor('files', 10))   // <-- MULTI FILES, LIMIT = 10
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        file: { type: 'string', format: 'binary' },
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
       },
     },
   })
-  async uploadFile(@UploadedFile() file: Express.Multer.File) {
-    if (!file) {
-      throw new BadRequestException('No file uploaded');
+  async uploadFiles(@UploadedFiles() files: Express.Multer.File[]) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('No files uploaded');
     }
 
-    const payload = {
+    const payload = files.map(file => ({
       filename: file.originalname,
       content: file.buffer.toString('base64'),
-    };
+    }));
 
     const cdnUrl = `${process.env.CDN_URL || 'http://localhost:3001'}/cdn/upload`;
-    
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(cdnUrl, payload)
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Error forwarding to CDN:', error.message);
-      throw new BadRequestException('Failed to upload file to CDN');
-    }
+
+    const response = await firstValueFrom(
+      this.httpService.post(cdnUrl, payload)
+    );
+
+    return response.data;
   }
 }
 
