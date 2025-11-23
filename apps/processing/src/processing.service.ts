@@ -312,67 +312,67 @@ private wrapText(text: string, maxWidth: number, font: any, size: number): strin
 /**
  * Merge specified PDFs from /final folder using their corresponding TXT files
  */
-async mergeFinalPdfsS3(filesToMerge?: string[]) {
-  // Generate random ID for the merged file
-  const mergeId = Math.random().toString(36).substring(2, 10);
-  const mergedPdfKey = `final-merged/finalmerge-${mergeId}.pdf`;
-  const mergedTxtKey = `final-merged/finalmerge-${mergeId}.txt`;
+  async mergeFinalPdfsS3(filesToMerge?: string[]) {
+    // Generate random ID for the merged file
+    const mergeId = Math.random().toString(36).substring(2, 10);
+    const mergedPdfKey = `final-merged/finalmerge-${mergeId}.pdf`;
+    const mergedTxtKey = `final-merged/finalmerge-${mergeId}.txt`;
 
-  this.logger.log('Listing all PDF files in S3 final/ folder...');
+    this.logger.log('Listing all PDF files in S3 final/ folder...');
 
-  const listCommand = new ListObjectsV2Command({
-    Bucket: this.bucket,
-    Prefix: 'final/',
-  });
+    const listCommand = new ListObjectsV2Command({
+      Bucket: this.bucket,
+      Prefix: 'final/',
+    });
 
-  const res = await this.s3.send(listCommand);
-  const s3PdfFiles: string[] = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
+    const res = await this.s3.send(listCommand);
+    const s3PdfFiles: string[] = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
 
-  if (!s3PdfFiles.length) {
-    return { status: 'empty', message: 'No PDFs found in S3 final/ folder to merge.' };
-  }
-
-  this.logger.log(`Processing ${s3PdfFiles.length} PDF files for AI merging: ${s3PdfFiles.join(', ')}`);
-
-  // 1. Extract text content from all TXT files
-  let allTextContent = '';
-  
-  for (const pdfKey of s3PdfFiles) {
-    try {
-      // Get the corresponding TXT file
-      const txtKey = pdfKey.replace('.pdf', '.txt');
-      const txtBuffer = await this.getFile(txtKey);
-      const content = txtBuffer.toString();
-      allTextContent += `\n\n=== CONTENT FROM ${pdfKey} ===\n${content}`;
-    } catch (error) {
-      this.logger.error(`Error getting text content from ${pdfKey}:`, error);
+    if (!s3PdfFiles.length) {
+      return { status: 'empty', message: 'No PDFs found in S3 final/ folder to merge.' };
     }
+
+    this.logger.log(`Processing ${s3PdfFiles.length} PDF files for AI merging: ${s3PdfFiles.join(', ')}`);
+
+    // 1. Extract text content from all TXT files
+    let allTextContent = '';
+    
+    for (const pdfKey of s3PdfFiles) {
+      try {
+        // Get the corresponding TXT file
+        const txtKey = pdfKey.replace('.pdf', '.txt');
+        const txtBuffer = await this.getFile(txtKey);
+        const content = txtBuffer.toString();
+        allTextContent += `\n\n=== CONTENT FROM ${pdfKey} ===\n${content}`;
+      } catch (error) {
+        this.logger.error(`Error getting text content from ${pdfKey}:`, error);
+      }
+    }
+
+    if (!allTextContent.trim()) {
+      return { status: 'error', message: 'No text content found to merge.' };
+    }
+
+    // 2. Send to Gemini API for intelligent merging
+    const mergedContent = await this.askGeminiToMerge(allTextContent);
+
+    // 3. Create final merged PDF and TXT
+    const finalPdf = await this.buildPdf(mergedContent, mergeId);
+    const finalTxt = Buffer.from(mergedContent, 'utf-8');
+
+    // 4. Save both merged files back to S3 with correct content types
+    await this.uploadFile(mergedPdfKey, finalPdf, 'application/pdf');
+    await this.uploadFile(mergedTxtKey, finalTxt, 'text/plain; charset=utf-8');
+
+    return {
+      status: 'ok',
+      mergeId: mergeId,
+      totalSourceFiles: s3PdfFiles.length,
+      pdfKey: mergedPdfKey,
+      txtKey: mergedTxtKey,
+      mergedFiles: s3PdfFiles,
+    };
   }
-
-  if (!allTextContent.trim()) {
-    return { status: 'error', message: 'No text content found to merge.' };
-  }
-
-  // 2. Send to Gemini API for intelligent merging
-  const mergedContent = await this.askGeminiToMerge(allTextContent);
-
-  // 3. Create final merged PDF and TXT
-  const finalPdf = await this.buildPdf(mergedContent, mergeId);
-  const finalTxt = Buffer.from(mergedContent, 'utf-8');
-
-  // 4. Save both merged files back to S3 with correct content types
-  await this.uploadFile(mergedPdfKey, finalPdf, 'application/pdf');
-  await this.uploadFile(mergedTxtKey, finalTxt, 'text/plain; charset=utf-8');
-
-  return {
-    status: 'ok',
-    mergeId: mergeId,
-    totalSourceFiles: s3PdfFiles.length,
-    pdfKey: mergedPdfKey,
-    txtKey: mergedTxtKey,
-    mergedFiles: s3PdfFiles,
-  };
-}
 
 /**
  * Ask Gemini to merge content intelligently
