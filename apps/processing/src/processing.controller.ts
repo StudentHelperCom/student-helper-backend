@@ -6,12 +6,14 @@ export class ProcessingController {
   constructor(private svc: ProcessingService) {}
 
   @Post('run')
-  runProcessing(@Body() body: { baseName: string }) {
-    return this.svc.process(body.baseName);
+  runProcessing(@Body() body: { userId: string; className: string; filename: string }) {
+    // Now passes all required parameters to target: userId/className/uploads/filename
+    return this.svc.process(body.userId, body.className);
   }
 
   @Post('merge')
-  async mergePdfs() {
-    return this.svc.mergeFinalPdfsS3();
+  async mergePdfs(@Body() body: { userId: string; className: string }) {
+    // Merges all PDFs found in: userId/className/final/
+    return this.svc.mergeFinalPdfsS3(body.userId, body.className);
   }
 }

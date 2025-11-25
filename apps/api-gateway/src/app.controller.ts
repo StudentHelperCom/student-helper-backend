@@ -4,26 +4,40 @@ import {
   UseInterceptors,
   BadRequestException, 
   Body,
-  UploadedFiles
+  UploadedFiles,
+  UseGuards,
+  Req,      
+  Logger   
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiConsumes, ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger'; // <-- Import ApiBearerAuth
 import { AuthDto } from './auth.dto';
+import { JwtAuthGuard } from './common/jwt-auth.guard';
+
 
 @ApiTags('CDN')
+@ApiBearerAuth()
 @Controller('cdn')
 export class CdnController {
+  private readonly logger = new Logger(CdnController.name);
+
   constructor(private readonly httpService: HttpService) {}
 
   @Post('upload')
-  @UseInterceptors(FilesInterceptor('files', 10))   // <-- MULTI FILES, LIMIT = 10
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('files', 10))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
+      required: ['className', 'files'], 
       properties: {
+        className: { 
+            type: 'string',
+            description: 'The name of the class/category for the folder' 
+        },
         files: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
@@ -31,23 +45,39 @@ export class CdnController {
       },
     },
   })
-  async uploadFiles(@UploadedFiles() files: Express.Multer.File[]) {
+  async uploadFiles(
+    @UploadedFiles() files: Express.Multer.File[], 
+    @Body() body: { className: string }, 
+    @Req() req
+  ) {
+    const user = req.user;
+
     if (!files || files.length === 0) {
       throw new BadRequestException('No files uploaded');
+    }
+
+    if (!body.className) {
+        throw new BadRequestException('Class name is required');
     }
 
     const payload = files.map(file => ({
       filename: file.originalname,
       content: file.buffer.toString('base64'),
+      userId: user.userId,
+      className: body.className 
     }));
 
     const cdnUrl = `${process.env.CDN_URL || 'http://localhost:3001'}/cdn/upload`;
 
-    const response = await firstValueFrom(
-      this.httpService.post(cdnUrl, payload)
-    );
-
-    return response.data;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(cdnUrl, payload)
+      );
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Upload failed for User [${user.userId}]: ${error.message}`);
+      throw new BadRequestException('Failed to upload files to CDN service');
+    }
   }
 }
 
@@ -117,32 +147,49 @@ export class AuthController {
 }
 
 @ApiTags('Processing')
+@ApiBearerAuth() // <-- Adds the lock icon in Swagger
 @Controller('processing')
 export class ProcessingController {
+  private readonly logger = new Logger(ProcessingController.name);
+
   constructor(private readonly httpService: HttpService) {}
 
   @Post('run')
-  @ApiOperation({ summary: 'Process PDF + TXT to generate a structured final PDF' })
+  @UseGuards(JwtAuthGuard) // <-- Protects route to get userId
+  @ApiOperation({ summary: 'Process ALL PDF files within a class folder' }) // Updated summary
   @ApiBody({
     schema: {
       type: 'object',
+      required: ['className'], // Removed filename requirement
       properties: {
-        baseName: { type: 'string', example: 'document123' }
+        className: { type: 'string', example: 'History 101', description: 'Folder name containing files to process' }
       },
-      required: ['baseName']
     }
   })
-  async runProcessing(@Body() body: { baseName: string }) {
-    if (!body?.baseName) {
-      throw new BadRequestException('baseName is required');
+  async runProcessing(
+    @Body() body: { className: string }, // Removed filename from DTO
+    @Req() req
+  ) {
+    const user = req.user;
+
+    if (!body.className) {
+      throw new BadRequestException('className is required');
     }
 
     const processingUrl = `${process.env.PROCESSING_URL || 'http://localhost:3003'}/processing/run`;
 
+    // Construct payload matching the NEW Microservice signature (userId + className only)
+    const payload = {
+      userId: user.userId,
+      className: body.className
+    };
+
     try {
+      this.logger.log(`Requesting batch processing for User [${user.userId}], Class [${body.className}]`);
+      
       const response = await firstValueFrom(
-        this.httpService.post(processingUrl, { baseName: body.baseName }, {
-          timeout: 120000,
+        this.httpService.post(processingUrl, payload, {
+          timeout: 180000, // Increased timeout because batch processing takes longer
           headers: { 'Content-Type': 'application/json' }
         })
       );
@@ -150,18 +197,46 @@ export class ProcessingController {
       return response.data;
 
     } catch (error) {
-      console.error('Processing service error:', error.response?.data || error.message);
-      throw new BadRequestException('Failed to process document');
+      this.logger.error(`Processing service error: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Failed to process documents');
     }
   }
+
   @Post('merge')
-  @ApiOperation({ summary: 'Merge all final PDFs into one deduplicated PDF' })
-  async mergePdfs() {
+  @UseGuards(JwtAuthGuard) // <-- Protects route to get userId
+  @ApiOperation({ summary: 'Merge all final PDFs in a class folder into one deduplicated PDF' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['className'],
+      properties: {
+        className: { type: 'string', example: 'History 101', description: 'Folder name to merge files from' }
+      },
+    }
+  })
+  async mergePdfs(
+    @Body() body: { className: string },
+    @Req() req
+  ) {
+    const user = req.user;
+
+    if (!body.className) {
+      throw new BadRequestException('className is required');
+    }
+
     const processingUrl = `${process.env.PROCESSING_URL || 'http://localhost:3003'}/processing/merge`;
 
+    // Construct payload matching the Microservice signature
+    const payload = {
+      userId: user.userId,
+      className: body.className
+    };
+
     try {
+      this.logger.log(`Requesting merge for User [${user.userId}], Class [${body.className}]`);
+
       const response = await firstValueFrom(
-        this.httpService.post(processingUrl, {}, {
+        this.httpService.post(processingUrl, payload, {
           timeout: 120000,
           headers: { 'Content-Type': 'application/json' }
         })
@@ -170,8 +245,8 @@ export class ProcessingController {
       return response.data;
 
     } catch (error) {
-      console.error('Merge service error:', error.response?.data || error.message);
-      throw new BadRequestException('Failed to merge PDFs');
+      this.logger.error(`Merge service error: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Failed to merge PDFs');
     }
   }
 }

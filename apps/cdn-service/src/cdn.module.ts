@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { CdnController } from './cdn.controller';
 import { CdnService } from './cdn.service';
+import { CdnController } from './cdn.controller';
 
 @Module({
   controllers: [CdnController],

@@ -1,12 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { 
+  S3Client, 
+  GetObjectCommand, 
+  PutObjectCommand, 
+  ListObjectsV2Command, 
+  ListObjectsV2CommandOutput, 
+  DeleteObjectsCommand 
+} from '@aws-sdk/client-s3';
 import axios from 'axios';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, rgb } from 'pdf-lib';
 import { Readable } from 'stream';
 import fontkit from '@pdf-lib/fontkit';
 import * as fs from 'fs';
 import * as path from 'path';
-
 
 @Injectable()
 export class ProcessingService {
@@ -24,80 +30,202 @@ export class ProcessingService {
   private geminiApiKey = process.env.GEMINI_API_KEY!;
   private geminiUrl = process.env.GEMINI_URL!;
 
-  async process(id: string) {
-    const txtKey = `processed/${id}.txt`;
-    const pdfKey = `uploads/${id}.pdf`;
+  // -------------------------------------------------------------------------
+  // 1. Process ALL Files in Class Folder
+  // -------------------------------------------------------------------------
+  async process(userId: string, className: string) {
+    const safeClassName = this.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
+    const uploadsPrefix = `${userId}/${safeClassName}/uploads/`;
 
-    this.logger.log(`Processing ${id}...`);
+    this.logger.log(`Starting batch processing for class: ${safeClassName}`);
+    this.logger.log(`Looking for files in: ${uploadsPrefix}`);
 
-    const txtBuffer = await this.getFile(txtKey);
-    const pdfBuffer = await this.getFile(pdfKey);
+    // 1. List all files in the uploads folder
+    const listCommand = new ListObjectsV2Command({
+      Bucket: this.bucket,
+      Prefix: uploadsPrefix,
+    });
 
-    const aiOutput = await this.askGemini(txtBuffer, pdfBuffer);
+    const res: ListObjectsV2CommandOutput = await this.s3.send(listCommand);
+    const s3PdfFiles: string[] = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
 
-    // Generate unique ID for final files
-    const finalId = Math.random().toString(36).substring(2, 10);
-    
-    // Create both PDF and TXT files
-    const finalPdf = await this.buildPdf(aiOutput, finalId);
-    const finalTxt = Buffer.from(aiOutput, 'utf-8');
+    if (!s3PdfFiles.length) {
+       return { status: 'empty', message: `No PDF files found in ${uploadsPrefix}` };
+    }
 
-    // Upload both files to S3 with correct content types
-    await this.uploadFile(`final/${finalId}.pdf`, finalPdf, 'application/pdf');
-    await this.uploadFile(`final/${finalId}.txt`, finalTxt, 'text/plain; charset=utf-8');
+    this.logger.log(`Found ${s3PdfFiles.length} files to process.`);
+
+    const results: any[] = [];
+
+    // 2. Iterate through every PDF found
+    for (const pdfKey of s3PdfFiles) {
+      const baseName = path.basename(pdfKey, '.pdf');
+      
+      // Assume the processed text file exists in the parallel 'processed' folder
+      const txtKey = `${userId}/${safeClassName}/processed/${baseName}.txt`;
+
+      this.logger.log(`Processing file: ${baseName}`);
+
+      try {
+        // Fetch buffers
+        const txtBuffer = await this.getFile(txtKey);
+        const pdfBuffer = await this.getFile(pdfKey);
+
+        // AI Processing (Using ORIGINAL Prompt)
+        const aiOutput = await this.askGemini(txtBuffer, pdfBuffer);
+
+        // Generate final files
+        const finalId = Math.random().toString(36).substring(2, 10);
+        const finalPdf = await this.buildPdf(aiOutput, finalId);
+        const finalTxt = Buffer.from(aiOutput, 'utf-8');
+
+        const finalPdfKey = `${userId}/${safeClassName}/final/${finalId}.pdf`;
+        const finalTxtKey = `${userId}/${safeClassName}/final/${finalId}.txt`;
+
+        // Upload
+        await this.uploadFile(finalPdfKey, finalPdf, 'application/pdf');
+        await this.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8');
+
+        results.push({
+          status: 'success',
+          baseName: baseName,
+          finalId: finalId,
+          pdfKey: finalPdfKey
+        });
+
+      } catch (error) {
+        this.logger.error(`Failed to process ${baseName}: ${error.message}`);
+        results.push({
+          status: 'error',
+          baseName: baseName,
+          error: error.message
+        });
+        // Continue loop even if one fails
+      }
+    }
 
     return { 
-      status: 'ok', 
-      finalId: finalId,
-      pdfKey: `final/${finalId}.pdf`,
-      txtKey: `final/${finalId}.txt`
+      status: 'batch_complete', 
+      totalProcessed: results.length,
+      details: results,
+      userId,
+      className: safeClassName
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // 2. Merge All Final PDFs for a Class
+  // -------------------------------------------------------------------------
+  async mergeFinalPdfsS3(userId: string, className: string) {
+    const safeClassName = this.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
+    const rootFolderPrefix = `${userId}/${safeClassName}/`;
+    const finalSubfolderPrefix = `${rootFolderPrefix}final/`;
+
+    this.logger.log(`Listing files to merge from: ${finalSubfolderPrefix}`);
+
+    const listCommand = new ListObjectsV2Command({
+      Bucket: this.bucket,
+      Prefix: finalSubfolderPrefix,
+    });
+
+    const res: ListObjectsV2CommandOutput = await this.s3.send(listCommand);
+    const s3PdfFiles: string[] = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
+
+    if (!s3PdfFiles.length) {
+      return { status: 'empty', message: `No PDFs found in ${finalSubfolderPrefix} to merge.` };
+    }
+
+    this.logger.log(`Found ${s3PdfFiles.length} files. Extracting content...`);
+
+    let allTextContent = '';
+    
+    for (const pdfKey of s3PdfFiles) {
+      try {
+        const txtKey = pdfKey.replace('.pdf', '.txt');
+        const txtBuffer = await this.getFile(txtKey);
+        const content = txtBuffer.toString();
+        allTextContent += `\n\n=== CONTENT FROM ${path.basename(pdfKey)} ===\n${content}`;
+      } catch (error) {
+        this.logger.error(`Error getting text content from ${pdfKey}:`, error);
+      }
+    }
+
+    if (!allTextContent.trim()) {
+      return { status: 'error', message: 'No text content found to merge.' };
+    }
+
+    // Call Merge with HIGHER TOKEN LIMIT
+    const mergedContent = await this.askGeminiToMerge(allTextContent);
+
+    const mergeId = Math.random().toString(36).substring(2, 10);
+    const finalPdfBuffer = await this.buildPdf(mergedContent, mergeId);
+    
+    const finalDestinationKey = `${rootFolderPrefix}Final_Merged_${safeClassName}.pdf`;
+
+    this.logger.log(`Cleaning up all files in ${rootFolderPrefix}...`);
+    await this.deleteFolderContents(rootFolderPrefix);
+
+    this.logger.log(`Uploading final merged file to: ${finalDestinationKey}`);
+    await this.uploadFile(finalDestinationKey, finalPdfBuffer, 'application/pdf');
+
+    return {
+      status: 'ok',
+      message: 'Merge complete. Cleanup done.',
+      finalPdfKey: finalDestinationKey,
     };
   }
 
   // -----------------------------
-  // S3 helpers
+  // Helpers
   // -----------------------------
-  private async getFile(key: string): Promise<Buffer> {
+  private async deleteFolderContents(prefix: string) {
     try {
-      this.logger.log(`Attempting to fetch file from S3: ${key}`);
-      
-      const res = await this.s3.send(
-        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-      );
+      let continuationToken: string | undefined = undefined;
+      do {
+        const listCommand = new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        });
 
-      const stream = res.Body as Readable;
-      const chunks: Buffer[] = [];
-
-      for await (const chunk of stream) chunks.push(chunk as Buffer);
-
-      this.logger.log(`Successfully fetched file: ${key}`);
-      return Buffer.concat(chunks);
+        const listRes: ListObjectsV2CommandOutput = await this.s3.send(listCommand);
+        
+        if (listRes.Contents && listRes.Contents.length > 0) {
+          const objectsToDelete = listRes.Contents.map((obj) => ({ Key: obj.Key }));
+          await this.s3.send(new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: { Objects: objectsToDelete }
+          }));
+        }
+        continuationToken = listRes.NextContinuationToken;
+      } while (continuationToken);
     } catch (error) {
-      this.logger.error(`Failed to fetch file ${key} from S3:`, error);
-      throw error;
+      this.logger.error(`Failed to cleanup folder ${prefix}: ${error.message}`);
     }
   }
 
-  private uploadFile(key: string, buffer: Buffer, contentType?: string) {
-    // Determine content type based on file extension if not provided
-    if (!contentType) {
-      if (key.endsWith('.pdf')) {
-        contentType = 'application/pdf';
-      } else if (key.endsWith('.txt')) {
-        contentType = 'text/plain';
-      } else {
-        contentType = 'application/octet-stream';
-      }
-    }
+  private sanitizeFilename(filename: string): string {
+    const baseName = path.basename(filename, path.extname(filename));
+    const ext = path.extname(filename);
+    const safeName = baseName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 100);
+    return safeName + ext.toLowerCase();
+  }
 
-    return this.s3.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        Body: buffer,
-        ContentType: contentType,
-      }),
-    );
+  private async getFile(key: string): Promise<Buffer> {
+    const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    const stream = res.Body as Readable;
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks);
+  }
+
+  private uploadFile(key: string, buffer: Buffer, contentType?: string) {
+    if (!contentType) {
+      if (key.endsWith('.pdf')) contentType = 'application/pdf';
+      else if (key.endsWith('.txt')) contentType = 'text/plain';
+      else contentType = 'application/octet-stream';
+    }
+    return this.s3.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: buffer, ContentType: contentType }));
   }
 
   // -----------------------------
@@ -159,24 +287,20 @@ export class ProcessingService {
             ]
           }
         ],
+        // UPDATED: Increased Tokens
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 4000,
+          maxOutputTokens: 8192, // Increased from 4000 to ~8k (Gemini 1.0 limit) or 16k if using 1.5 Pro
         }
       };
 
       const urlWithKey = `${this.geminiUrl}?key=${this.geminiApiKey}`;
-
-      console.log('Creating structured topics from content...');
       
       const res = await axios.post(urlWithKey, requestBody, {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        timeout: 120000,
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 180000, // Increased timeout to 3 minutes
       });
 
-      // Safe response extraction
       let resultText = '';
       if (res.data.candidates?.[0]?.content?.parts?.[0]?.text) {
         resultText = res.data.candidates[0].content.parts[0].text;
@@ -184,207 +308,22 @@ export class ProcessingService {
         resultText = res.data.contents[0].parts[0].text;
       } else if (res.data.text) {
         resultText = res.data.text;
-      } else {
-        console.warn('Unexpected response structure:', res.data);
-        resultText = JSON.stringify(res.data);
       }
-
-      console.log('Structured Topics Created');
       return resultText;
 
     } catch (error) {
-      console.error('Gemini API Error:', error.response?.data || error.message);
       throw new Error(`Gemini API failed: ${error.response?.data?.error?.message || error.message}`);
     }
   }
 
-  // -----------------------------
-  // Build resulting PDF
-  // -----------------------------
-// -----------------------------
-// Build resulting PDF and TXT
-// -----------------------------
-private async buildPdf(content: string, id: string): Promise<Buffer> {
-  // Create PDF and register fontkit so we can load TTF fonts
-  const pdf = await PDFDocument.create();
-  pdf.registerFontkit(fontkit);
-
-  // Load Unicode-supported TTF fonts
-  const regularFontBytes = fs.readFileSync(
-    path.join(__dirname, '..', 'assets', 'fonts', 'DejaVuSans.ttf')
-  );
-
-  const font = await pdf.embedFont(regularFontBytes);
-
-  // Create first page
-  let page = pdf.addPage([595, 842]); // A4 portrait
-  const topicSize = 14;
-  const fontSize = 11;
-  const lineHeight = 14;
-  const margin = 50;
-  const maxWidth = page.getWidth() - margin * 2;
-
-  let x = margin;
-  let y = page.getHeight() - margin;
-
-  // Split into lines
-  const lines = content.split('\n').filter(line => line.trim().length > 0);
-
-  for (const line of lines) {
-    // Create new page if needed
-    if (y < margin + 40) {
-      page = pdf.addPage([595, 842]);
-      y = page.getHeight() - margin;
-    }
-
-    const cleanLine = line.trim();
-
-    // Detect numbered-topic headings (e.g., "1. Something", "12. Topic name")
-    const isTopicLine = /^\d+\.\s/.test(cleanLine);
-
-    if (isTopicLine) {
-      // Draw topic title
-      if (y < page.getHeight() - margin) {
-        y -= 8;
-      }
-      page.drawText(cleanLine, {
-        x,
-        y,
-        size: topicSize,
-        font: font,
-        color: rgb(0, 0, 0),
-      });
-
-      y -= topicSize + 4;
-      continue;
-    }
-
-    // Wrap long lines
-    const wrapped = this.wrapText(cleanLine, maxWidth, font, fontSize);
-
-    for (const wLine of wrapped) {
-      if (y < margin) {
-        page = pdf.addPage([595, 842]);
-        y = page.getHeight() - margin;
-      }
-
-      page.drawText(wLine, {
-        x,
-        y,
-        size: fontSize,
-        font: font,
-        color: rgb(0, 0, 0),
-      });
-
-      y -= lineHeight;
-    }
-  }
-
-  return Buffer.from(await pdf.save());
-}
-
-private wrapText(text: string, maxWidth: number, font: any, size: number): string[] {
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let currentLine = '';
-
-  for (const word of words) {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-    const width = font.widthOfTextAtSize(testLine, size);
-
-    if (width <= maxWidth) {
-      currentLine = testLine;
-    } else {
-      if (currentLine) {
-        lines.push(currentLine);
-      }
-      currentLine = word;
-    }
-  }
-
-  if (currentLine) {
-    lines.push(currentLine);
-  }
-
-  return lines;
-}
-
-/**
- * Merge specified PDFs from /final folder using their corresponding TXT files
- */
-  async mergeFinalPdfsS3(filesToMerge?: string[]) {
-    // Generate random ID for the merged file
-    const mergeId = Math.random().toString(36).substring(2, 10);
-    const mergedPdfKey = `final-merged/finalmerge-${mergeId}.pdf`;
-    const mergedTxtKey = `final-merged/finalmerge-${mergeId}.txt`;
-
-    this.logger.log('Listing all PDF files in S3 final/ folder...');
-
-    const listCommand = new ListObjectsV2Command({
-      Bucket: this.bucket,
-      Prefix: 'final/',
-    });
-
-    const res = await this.s3.send(listCommand);
-    const s3PdfFiles: string[] = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
-
-    if (!s3PdfFiles.length) {
-      return { status: 'empty', message: 'No PDFs found in S3 final/ folder to merge.' };
-    }
-
-    this.logger.log(`Processing ${s3PdfFiles.length} PDF files for AI merging: ${s3PdfFiles.join(', ')}`);
-
-    // 1. Extract text content from all TXT files
-    let allTextContent = '';
-    
-    for (const pdfKey of s3PdfFiles) {
-      try {
-        // Get the corresponding TXT file
-        const txtKey = pdfKey.replace('.pdf', '.txt');
-        const txtBuffer = await this.getFile(txtKey);
-        const content = txtBuffer.toString();
-        allTextContent += `\n\n=== CONTENT FROM ${pdfKey} ===\n${content}`;
-      } catch (error) {
-        this.logger.error(`Error getting text content from ${pdfKey}:`, error);
-      }
-    }
-
-    if (!allTextContent.trim()) {
-      return { status: 'error', message: 'No text content found to merge.' };
-    }
-
-    // 2. Send to Gemini API for intelligent merging
-    const mergedContent = await this.askGeminiToMerge(allTextContent);
-
-    // 3. Create final merged PDF and TXT
-    const finalPdf = await this.buildPdf(mergedContent, mergeId);
-    const finalTxt = Buffer.from(mergedContent, 'utf-8');
-
-    // 4. Save both merged files back to S3 with correct content types
-    await this.uploadFile(mergedPdfKey, finalPdf, 'application/pdf');
-    await this.uploadFile(mergedTxtKey, finalTxt, 'text/plain; charset=utf-8');
-
-    return {
-      status: 'ok',
-      mergeId: mergeId,
-      totalSourceFiles: s3PdfFiles.length,
-      pdfKey: mergedPdfKey,
-      txtKey: mergedTxtKey,
-      mergedFiles: s3PdfFiles,
-    };
-  }
-
-/**
- * Ask Gemini to merge content intelligently
- */
-private async askGeminiToMerge(allContent: string): Promise<string> {
-  try {
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            {
-              text: `MERGE AND DEDUPLICATE THIS EDUCATIONAL CONTENT:
+  private async askGeminiToMerge(allContent: string): Promise<string> {
+    try {
+      const requestBody = {
+        contents: [
+          {
+            parts: [
+              {
+                text: `MERGE AND DEDUPLICATE THIS EDUCATIONAL CONTENT:
 
 ${allContent}
 
@@ -417,46 +356,136 @@ RULES:
 - Renumber everything sequentially
 - Maintain the same plain text format
 - Keep all image descriptions and important details, and all information, text should be the same`
-            }
-          ]
+              }
+            ]
+          }
+        ],
+        // UPDATED: Increased Tokens massively
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 16000, // Use the max available for your model
         }
-      ],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 8000,
+      };
+
+      const urlWithKey = `${this.geminiUrl}?key=${this.geminiApiKey}`;
+      
+      const res = await axios.post(urlWithKey, requestBody, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 300000, // Increased timeout to 5 minutes for long generation
+      });
+
+      let resultText = '';
+      if (res.data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        resultText = res.data.candidates[0].content.parts[0].text;
+      } else if (res.data.contents?.[0]?.parts?.[0]?.text) {
+        resultText = res.data.contents[0].parts[0].text;
+      } else if (res.data.text) {
+        resultText = res.data.text;
       }
-    };
+      return resultText;
 
-    const urlWithKey = `${this.geminiUrl}?key=${this.geminiApiKey}`;
+    } catch (error) {
+      throw new Error(`Gemini API merge failed: ${error.response?.data?.error?.message || error.message}`);
+    }
+  }
 
-    this.logger.log('Sending content to Gemini for intelligent merging...');
-    
-    const res = await axios.post(urlWithKey, requestBody, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      timeout: 120000,
-    });
+  // -----------------------------
+  // Build PDF (ORIGINAL)
+  // -----------------------------
+  private async buildPdf(content: string, id: string): Promise<Buffer> {
+    const pdf = await PDFDocument.create();
+    pdf.registerFontkit(fontkit);
 
-    // Safe response extraction
-    let resultText = '';
-    if (res.data.candidates?.[0]?.content?.parts?.[0]?.text) {
-      resultText = res.data.candidates[0].content.parts[0].text;
-    } else if (res.data.contents?.[0]?.parts?.[0]?.text) {
-      resultText = res.data.contents[0].parts[0].text;
-    } else if (res.data.text) {
-      resultText = res.data.text;
-    } else {
-      console.warn('Unexpected response structure:', res.data);
-      resultText = JSON.stringify(res.data);
+    const regularFontBytes = fs.readFileSync(
+      path.join(__dirname, '..', 'assets', 'fonts', 'DejaVuSans.ttf')
+    );
+
+    const font = await pdf.embedFont(regularFontBytes);
+
+    let page = pdf.addPage([595, 842]);
+    const topicSize = 14;
+    const fontSize = 11;
+    const lineHeight = 14;
+    const margin = 50;
+    const maxWidth = page.getWidth() - margin * 2;
+
+    let x = margin;
+    let y = page.getHeight() - margin;
+
+    const lines = content.split('\n').filter(line => line.trim().length > 0);
+
+    for (const line of lines) {
+      if (y < margin + 40) {
+        page = pdf.addPage([595, 842]);
+        y = page.getHeight() - margin;
+      }
+
+      const cleanLine = line.trim();
+
+      const isTopicLine = /^\d+\.\s/.test(cleanLine);
+
+      if (isTopicLine) {
+        if (y < page.getHeight() - margin) {
+          y -= 8;
+        }
+        page.drawText(cleanLine, {
+          x,
+          y,
+          size: topicSize,
+          font: font,
+          color: rgb(0, 0, 0),
+        });
+
+        y -= topicSize + 4;
+        continue;
+      }
+
+      const wrapped = this.wrapText(cleanLine, maxWidth, font, fontSize);
+
+      for (const wLine of wrapped) {
+        if (y < margin) {
+          page = pdf.addPage([595, 842]);
+          y = page.getHeight() - margin;
+        }
+
+        page.drawText(wLine, {
+          x,
+          y,
+          size: fontSize,
+          font: font,
+          color: rgb(0, 0, 0),
+        });
+
+        y -= lineHeight;
+      }
     }
 
-    this.logger.log('Content successfully merged by AI');
-    return resultText;
-
-  } catch (error) {
-    console.error('Gemini API Error during merge:', error.response?.data || error.message);
-    throw new Error(`Gemini API merge failed: ${error.response?.data?.error?.message || error.message}`);
+    return Buffer.from(await pdf.save());
   }
-}
+
+  private wrapText(text: string, maxWidth: number, font: any, size: number): string[] {
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      const width = font.widthOfTextAtSize(testLine, size);
+
+      if (width <= maxWidth) {
+        currentLine = testLine;
+      } else {
+        if (currentLine) {
+          lines.push(currentLine);
+        }
+        currentLine = word;
+      }
+    }
+
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+
+    return lines;
+  }
 }
