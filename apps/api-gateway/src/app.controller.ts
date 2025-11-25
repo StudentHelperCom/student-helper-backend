@@ -249,4 +249,50 @@ export class ProcessingController {
       throw new BadRequestException(error.response?.data?.message || 'Failed to merge PDFs');
     }
   }
+  @Post('split')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Split the final merged PDF into individual topic PDFs (t1.pdf, t2.pdf...)' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['className'],
+      properties: {
+        className: { type: 'string', example: 'History 101', description: 'Folder name containing the merge' }
+      },
+    }
+  })
+  async splitMergedPdf(
+    @Body() body: { className: string },
+    @Req() req
+  ) {
+    const user = req.user;
+
+    if (!body.className) {
+      throw new BadRequestException('className is required');
+    }
+
+    const processingUrl = `${process.env.PROCESSING_URL || 'http://localhost:3003'}/processing/split`;
+
+    const payload = {
+      userId: user.userId,
+      className: body.className
+    };
+
+    try {
+      this.logger.log(`Requesting split for User [${user.userId}], Class [${body.className}]`);
+
+      const response = await firstValueFrom(
+        this.httpService.post(processingUrl, payload, {
+          timeout: 120000, // 2 minutes timeout should be enough for splitting
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+
+      return response.data;
+
+    } catch (error) {
+      this.logger.error(`Split service error: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Failed to split PDF');
+    }
+  }
 }

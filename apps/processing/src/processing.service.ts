@@ -31,7 +31,7 @@ export class ProcessingService {
   private geminiUrl = process.env.GEMINI_URL!;
 
   // -------------------------------------------------------------------------
-  // 1. Process ALL Files in Class Folder
+  // 1. Process ALL Files in Class Folder (Batch)
   // -------------------------------------------------------------------------
   async process(userId: string, className: string) {
     const safeClassName = this.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
@@ -40,7 +40,6 @@ export class ProcessingService {
     this.logger.log(`Starting batch processing for class: ${safeClassName}`);
     this.logger.log(`Looking for files in: ${uploadsPrefix}`);
 
-    // 1. List all files in the uploads folder
     const listCommand = new ListObjectsV2Command({
       Bucket: this.bucket,
       Prefix: uploadsPrefix,
@@ -57,24 +56,18 @@ export class ProcessingService {
 
     const results: any[] = [];
 
-    // 2. Iterate through every PDF found
     for (const pdfKey of s3PdfFiles) {
       const baseName = path.basename(pdfKey, '.pdf');
-      
-      // Assume the processed text file exists in the parallel 'processed' folder
       const txtKey = `${userId}/${safeClassName}/processed/${baseName}.txt`;
 
       this.logger.log(`Processing file: ${baseName}`);
 
       try {
-        // Fetch buffers
         const txtBuffer = await this.getFile(txtKey);
         const pdfBuffer = await this.getFile(pdfKey);
 
-        // AI Processing (Using ORIGINAL Prompt)
         const aiOutput = await this.askGemini(txtBuffer, pdfBuffer);
 
-        // Generate final files
         const finalId = Math.random().toString(36).substring(2, 10);
         const finalPdf = await this.buildPdf(aiOutput, finalId);
         const finalTxt = Buffer.from(aiOutput, 'utf-8');
@@ -82,7 +75,6 @@ export class ProcessingService {
         const finalPdfKey = `${userId}/${safeClassName}/final/${finalId}.pdf`;
         const finalTxtKey = `${userId}/${safeClassName}/final/${finalId}.txt`;
 
-        // Upload
         await this.uploadFile(finalPdfKey, finalPdf, 'application/pdf');
         await this.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8');
 
@@ -100,7 +92,6 @@ export class ProcessingService {
           baseName: baseName,
           error: error.message
         });
-        // Continue loop even if one fails
       }
     }
 
@@ -114,7 +105,7 @@ export class ProcessingService {
   }
 
   // -------------------------------------------------------------------------
-  // 2. Merge All Final PDFs for a Class
+  // 2. Merge All Final PDFs 
   // -------------------------------------------------------------------------
   async mergeFinalPdfsS3(userId: string, className: string) {
     const safeClassName = this.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
@@ -154,24 +145,149 @@ export class ProcessingService {
       return { status: 'error', message: 'No text content found to merge.' };
     }
 
-    // Call Merge with HIGHER TOKEN LIMIT
     const mergedContent = await this.askGeminiToMerge(allTextContent);
 
+    // Prepare Final Files
     const mergeId = Math.random().toString(36).substring(2, 10);
     const finalPdfBuffer = await this.buildPdf(mergedContent, mergeId);
+    const finalTxtBuffer = Buffer.from(mergedContent, 'utf-8');
     
-    const finalDestinationKey = `${rootFolderPrefix}Final_Merged_${safeClassName}.pdf`;
+    const finalPdfKey = `${rootFolderPrefix}Final_Merged_${safeClassName}.pdf`;
+    const finalTxtKey = `${rootFolderPrefix}Final_Merged_${safeClassName}.txt`;
 
     this.logger.log(`Cleaning up all files in ${rootFolderPrefix}...`);
     await this.deleteFolderContents(rootFolderPrefix);
 
-    this.logger.log(`Uploading final merged file to: ${finalDestinationKey}`);
-    await this.uploadFile(finalDestinationKey, finalPdfBuffer, 'application/pdf');
+    this.logger.log(`Uploading final merged files...`);
+    await this.uploadFile(finalPdfKey, finalPdfBuffer, 'application/pdf');
+    await this.uploadFile(finalTxtKey, finalTxtBuffer, 'text/plain; charset=utf-8');
 
     return {
       status: 'ok',
-      message: 'Merge complete. Cleanup done.',
-      finalPdfKey: finalDestinationKey,
+      message: 'Merge complete. Cleanup done. Created PDF and TXT.',
+      finalPdfKey: finalPdfKey,
+      finalTxtKey: finalTxtKey
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // 3. Split Merged TXT into Topic PDFs (Fixed for Literature Lists)
+  // -------------------------------------------------------------------------
+  async splitMergedPdf(userId: string, className: string) {
+    const safeClassName = this.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
+    const rootFolderPrefix = `${userId}/${safeClassName}/`;
+    
+    const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${safeClassName}.txt`;
+
+    this.logger.log(`Attempting to split topics from: ${mergedTxtKey}`);
+
+    let fullText = '';
+    try {
+      const buffer = await this.getFile(mergedTxtKey);
+      fullText = buffer.toString('utf-8');
+    } catch (error) {
+      this.logger.error(`Could not find merged text file: ${mergedTxtKey}`);
+      throw new Error('Merged text file not found. Please run merge first.');
+    }
+
+    // --- LOGIC START ---
+    const lines = fullText.split('\n');
+    const topics: { number: string; content: string }[] = [];
+    
+    let currentTopicNumber = 0; // Track the numeric value
+    let currentTopicString = ''; // Track the string "1", "2"
+    let currentContent: string[] = [];
+
+    // Keywords that indicate a section might contain a list we shouldn't split
+    const literatureKeywords = ['bibliografia', 'literatura', 'źródła', 'wykaz', 'references', 'bibliography'];
+    let isInsideLiterature = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      // Match "1. Topic" OR "16. Bibliography"
+      // Capture groups: [1] = Number, [2] = Rest of text
+      const match = trimmed.match(/^(\d+)\.\s+(.*)/);
+
+      if (match) {
+        const foundNumber = parseInt(match[1], 10);
+        const topicTitle = match[2].toLowerCase();
+
+        // CHECK 1: Sequence Logic
+        // If we found "1." but we are currently at topic "15", this is NOT a new topic.
+        // It's likely a list item inside the previous topic.
+        const isSequenceReset = foundNumber < currentTopicNumber;
+
+        // CHECK 2: Literature Logic
+        // If we are currently inside a literature topic, ignore all numbers
+        // UNLESS the number continues the main sequence (e.g. Topic 16 -> Topic 17)
+        const isNextTopic = foundNumber === currentTopicNumber + 1;
+
+        if (isSequenceReset || (isInsideLiterature && !isNextTopic)) {
+             // THIS IS CONTENT, NOT A NEW FILE.
+             // Mask the dot so buildPdf doesn't make it a huge header.
+             // Change "1. Book Name" -> "1) Book Name"
+             const maskedLine = line.replace('.', ')');
+             currentContent.push(maskedLine);
+             continue; // Skip to next line
+        }
+
+        // --- NEW TOPIC DETECTED ---
+        
+        // Save previous topic if exists
+        if (currentTopicString) {
+            topics.push({ number: currentTopicString, content: currentContent.join('\n') });
+        }
+
+        // Start new topic
+        currentTopicNumber = foundNumber;
+        currentTopicString = match[1];
+        currentContent = [trimmed]; // Start with the header
+
+        // Check if this new topic IS the literature section
+        isInsideLiterature = literatureKeywords.some(keyword => topicTitle.includes(keyword));
+
+      } else {
+        // Just a regular line of text
+        if (currentTopicString) {
+            currentContent.push(line);
+        }
+      }
+    }
+
+    // Push the last topic
+    if (currentTopicString && currentContent.length > 0) {
+        topics.push({ number: currentTopicString, content: currentContent.join('\n') });
+    }
+    // --- LOGIC END ---
+
+    this.logger.log(`Found ${topics.length} actual topics to generate.`);
+
+    const generatedFiles: string[] = [];
+
+    for (const topic of topics) {
+        const pdfBuffer = await this.buildPdf(topic.content, 'temp');
+        const fileName = `t${topic.number}.pdf`;
+        const finalKey = `${rootFolderPrefix}${fileName}`;
+
+        await this.uploadFile(finalKey, pdfBuffer, 'application/pdf');
+        generatedFiles.push(finalKey);
+    }
+
+    this.logger.log('Deleting merged TXT file (keeping PDF)...');
+    await this.s3.send(new DeleteObjectsCommand({
+        Bucket: this.bucket,
+        Delete: {
+            Objects: [
+                { Key: mergedTxtKey }
+            ]
+        }
+    }));
+
+    return {
+        status: 'ok',
+        message: `Split into ${generatedFiles.length} files. Merged TXT deleted.`,
+        files: generatedFiles
     };
   }
 
@@ -287,10 +403,9 @@ export class ProcessingService {
             ]
           }
         ],
-        // UPDATED: Increased Tokens
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 8192, // Increased from 4000 to ~8k (Gemini 1.0 limit) or 16k if using 1.5 Pro
+          maxOutputTokens: 8192,
         }
       };
 
@@ -298,7 +413,7 @@ export class ProcessingService {
       
       const res = await axios.post(urlWithKey, requestBody, {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 180000, // Increased timeout to 3 minutes
+        timeout: 180000,
       });
 
       let resultText = '';
@@ -360,10 +475,9 @@ RULES:
             ]
           }
         ],
-        // UPDATED: Increased Tokens massively
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 16000, // Use the max available for your model
+          maxOutputTokens: 16000,
         }
       };
 
@@ -371,7 +485,7 @@ RULES:
       
       const res = await axios.post(urlWithKey, requestBody, {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 300000, // Increased timeout to 5 minutes for long generation
+        timeout: 300000,
       });
 
       let resultText = '';
@@ -390,7 +504,7 @@ RULES:
   }
 
   // -----------------------------
-  // Build PDF (ORIGINAL)
+  // Build PDF (Fixed: Regex Safety)
   // -----------------------------
   private async buildPdf(content: string, id: string): Promise<Buffer> {
     const pdf = await PDFDocument.create();
@@ -422,6 +536,8 @@ RULES:
 
       const cleanLine = line.trim();
 
+      // Ensure we only bold ACTUAL top-level headers, not sub-lists we masked with ')'
+      // The splitMergedPdf turns sublists into "1)" so this regex "^\d+\." won't match them.
       const isTopicLine = /^\d+\.\s/.test(cleanLine);
 
       if (isTopicLine) {
