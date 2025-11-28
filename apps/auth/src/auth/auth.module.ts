@@ -6,22 +6,22 @@ import { JwtModule } from '@nestjs/jwt';
 import { HashService } from '../common/hash.service';
 import { AuthController } from './auth.controller';
 import { UsersModule } from 'src/users/users.module';
-import { ConfigModule, ConfigService } from '@nestjs/config'; // Import these
+import { ConfigModule, ConfigService } from '@nestjs/config'; 
+import { ServiceHealthController } from 'src/service-health.controller';
 
 @Module({
   imports: [
     UsersModule, //
-    // Use registerAsync to safely load the secret from .env
     JwtModule.registerAsync({
-      imports: [ConfigModule], // Import ConfigModule here
+      imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('AUTH_JWT_SECRET'), // Use the key from your .env
+        secret: configService.get<string>('AUTH_JWT_SECRET'), 
         signOptions: { expiresIn: '10y' },
       }),
     }),
   ],
-  controllers: [AuthController], //
-  providers: [AuthService, UsersService, HashService], //
+  controllers: [AuthController, ServiceHealthController], 
+  providers: [AuthService, UsersService, HashService], 
 })
 export class AuthModule {}

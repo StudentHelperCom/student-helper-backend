@@ -12,7 +12,7 @@ import {
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger'; // <-- Import ApiBearerAuth
+import { ApiBody, ApiConsumes, ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger'; 
 import { AuthDto } from './auth.dto';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
 
@@ -28,6 +28,7 @@ export class CdnController {
   @Post('upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files', 10))
+  @ApiOperation({ summary: 'Upload the file on the S3 server' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -67,7 +68,7 @@ export class CdnController {
       className: body.className 
     }));
 
-    const cdnUrl = `${process.env.CDN_URL || 'http://localhost:3001'}/cdn/upload`;
+    const cdnUrl = `${process.env.CDN_URL!}/cdn/upload`;
 
     try {
       const response = await firstValueFrom(
@@ -90,7 +91,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Register a new user' })
   @ApiBody({ type: AuthDto })
   async register(@Body() body: AuthDto) {
-    const userServiceUrl = `${process.env.AUTH_URL || 'http://localhost:3002'}/auth/register`;
+    const userServiceUrl = `${process.env.AUTH_URL!}/auth/register`;
 
     const payload = {
       login: body.login,
@@ -122,7 +123,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Login user' })
   @ApiBody({ type: AuthDto })
   async login(@Body() body: AuthDto) {
-    const userServiceUrl = `${process.env.AUTH_URL || 'http://localhost:3002'}/auth/login`;
+    const userServiceUrl = `${process.env.AUTH_URL!}/auth/login`;
 
     const payload = {
       login: body.login,
@@ -147,7 +148,7 @@ export class AuthController {
 }
 
 @ApiTags('Processing')
-@ApiBearerAuth() // <-- Adds the lock icon in Swagger
+@ApiBearerAuth()
 @Controller('processing')
 export class ProcessingController {
   private readonly logger = new Logger(ProcessingController.name);
@@ -155,12 +156,12 @@ export class ProcessingController {
   constructor(private readonly httpService: HttpService) {}
 
   @Post('run')
-  @UseGuards(JwtAuthGuard) // <-- Protects route to get userId
+  @UseGuards(JwtAuthGuard) 
   @ApiOperation({ summary: 'Process ALL PDF files within a class folder' }) // Updated summary
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['className'], // Removed filename requirement
+      required: ['className'],
       properties: {
         className: { type: 'string', example: 'History 101', description: 'Folder name containing files to process' }
       },
@@ -176,7 +177,7 @@ export class ProcessingController {
       throw new BadRequestException('className is required');
     }
 
-    const processingUrl = `${process.env.PROCESSING_URL || 'http://localhost:3003'}/processing/run`;
+    const processingUrl = `${process.env.PROCESSING_URL!}/processing/run`;
 
     // Construct payload matching the NEW Microservice signature (userId + className only)
     const payload = {
@@ -224,7 +225,7 @@ export class ProcessingController {
       throw new BadRequestException('className is required');
     }
 
-    const processingUrl = `${process.env.PROCESSING_URL || 'http://localhost:3003'}/processing/merge`;
+    const processingUrl = `${process.env.PROCESSING_URL!}/processing/merge`;
 
     // Construct payload matching the Microservice signature
     const payload = {
@@ -271,7 +272,7 @@ export class ProcessingController {
       throw new BadRequestException('className is required');
     }
 
-    const processingUrl = `${process.env.PROCESSING_URL || 'http://localhost:3003'}/processing/split`;
+    const processingUrl = `${process.env.PROCESSING_URL!}/processing/split`;
 
     const payload = {
       userId: user.userId,
@@ -283,7 +284,7 @@ export class ProcessingController {
 
       const response = await firstValueFrom(
         this.httpService.post(processingUrl, payload, {
-          timeout: 120000, // 2 minutes timeout should be enough for splitting
+          timeout: 120000,
           headers: { 'Content-Type': 'application/json' }
         })
       );

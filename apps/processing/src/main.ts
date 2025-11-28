@@ -6,7 +6,7 @@ import { ProcessingModule } from './processing.module';
 async function bootstrap() {
   const app = await NestFactory.create(ProcessingModule);
 
-  const port = parseInt(process.env.PORT || '3003', 10);
+  const port = parseInt(process.env.PORT!, 10);
 
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));

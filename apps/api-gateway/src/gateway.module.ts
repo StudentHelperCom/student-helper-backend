@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { PassportModule } from '@nestjs/passport';
-import { CdnController, AuthController, ProcessingController } from './app.controller';
 import { JwtStrategy } from './common/jwt.strategy';
+import { HealthController } from './healthchecks/health.controler';
+import { TerminusModule } from '@nestjs/terminus';
+import { CdnController, AuthController, ProcessingController } from './gateway.controller';
 
 @Module({
   imports: [
@@ -18,8 +20,9 @@ import { JwtStrategy } from './common/jwt.strategy';
       }),
     }),
     PassportModule,
+    TerminusModule
   ],
-  controllers: [CdnController, AuthController, ProcessingController],
+  controllers: [CdnController, AuthController, ProcessingController, HealthController],
   providers: [JwtStrategy], 
 })
 export class AppModule {}

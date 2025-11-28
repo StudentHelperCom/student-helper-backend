@@ -6,7 +6,7 @@ import { CdnModule } from './cdn.module';
 async function bootstrap() {
   const app = await NestFactory.create(CdnModule);
   
-  const port = parseInt(process.env.CDN_PORT || '3001', 10);
+  const port = parseInt(process.env.PORT!, 10);
   
   app.use(json({ limit: '50mb' })); // For JSON payloads
   app.use(urlencoded({ extended: true, limit: '50mb' })); // For URL-encoded data
