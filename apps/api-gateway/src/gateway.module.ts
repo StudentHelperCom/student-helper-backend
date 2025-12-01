@@ -3,9 +3,8 @@ import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './common/jwt.strategy';
-import { HealthController } from './healthchecks/health.controler';
 import { TerminusModule } from '@nestjs/terminus';
-import { CdnController, AuthController, ProcessingController } from './gateway.controller';
+import { CdnController, AuthController, ProcessingController, HealthController } from './gateway.controller';
 
 @Module({
   imports: [

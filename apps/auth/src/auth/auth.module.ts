@@ -7,7 +7,6 @@ import { HashService } from '../common/hash.service';
 import { AuthController } from './auth.controller';
 import { UsersModule } from 'src/users/users.module';
 import { ConfigModule, ConfigService } from '@nestjs/config'; 
-import { ServiceHealthController } from 'src/service-health.controller';
 
 @Module({
   imports: [
@@ -21,7 +20,7 @@ import { ServiceHealthController } from 'src/service-health.controller';
       }),
     }),
   ],
-  controllers: [AuthController, ServiceHealthController], 
+  controllers: [AuthController], 
   providers: [AuthService, UsersService, HashService], 
 })
 export class AuthModule {}

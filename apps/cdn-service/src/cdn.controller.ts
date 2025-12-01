@@ -1,10 +1,15 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, Get } from '@nestjs/common';
 import { CdnService } from './cdn.service';
 
 @Controller('cdn')
 export class CdnController {
   constructor(private readonly cdnService: CdnService) {}
 
+  @Get('health')
+  healthCheck() {
+    return 'OK';
+  }
+  
   @Post('upload')
   async uploadFiles(@Body() data: { filename: string; content: string; userId: string; className: string }[]) {
     const results: any[] = [];

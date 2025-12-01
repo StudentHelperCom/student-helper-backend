@@ -7,7 +7,8 @@ import {
   UploadedFiles,
   UseGuards,
   Req,      
-  Logger   
+  Logger,   
+  Get
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { HttpService } from '@nestjs/axios';
@@ -16,6 +17,15 @@ import { ApiBody, ApiConsumes, ApiOperation, ApiTags, ApiBearerAuth } from '@nes
 import { AuthDto } from './auth.dto';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
 
+@ApiTags('Health')
+@Controller('health')
+export class HealthController {
+  @Get()
+  @ApiOperation({ summary: 'Gateway application health check' })
+  healthCheck() {
+    return 'OK';
+  }
+}
 
 @ApiTags('CDN')
 @ApiBearerAuth()
@@ -24,6 +34,12 @@ export class CdnController {
   private readonly logger = new Logger(CdnController.name);
 
   constructor(private readonly httpService: HttpService) {}
+
+  @Get('health')
+  @ApiOperation({ summary: 'Health check' })
+  healthCheck() {
+    return 'OK';
+  }
 
   @Post('upload')
   @UseGuards(JwtAuthGuard)
@@ -86,6 +102,12 @@ export class CdnController {
 @Controller('auth')
 export class AuthController {
   constructor(private readonly httpService: HttpService) {}
+
+  @Get('health')
+  @ApiOperation({ summary: 'Health check' })
+  healthCheck() {
+    return 'OK';
+  }
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
@@ -154,6 +176,12 @@ export class ProcessingController {
   private readonly logger = new Logger(ProcessingController.name);
 
   constructor(private readonly httpService: HttpService) {}
+
+  @Get('health')
+  @ApiOperation({ summary: 'Health check' })
+  healthCheck() {
+    return 'OK';
+  }
 
   @Post('run')
   @UseGuards(JwtAuthGuard) 
