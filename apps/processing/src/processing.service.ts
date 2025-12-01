@@ -14,6 +14,9 @@ import fontkit from '@pdf-lib/fontkit';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Helper for pausing execution
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 @Injectable()
 export class ProcessingService {
   private readonly logger = new Logger(ProcessingService.name);
@@ -25,83 +28,113 @@ export class ProcessingService {
       accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
     },
+    requestHandler: {
+        connectionTimeout: 5000,
+        socketTimeout: 5000,
+    } as any
   });
 
   private geminiApiKey = process.env.GEMINI_API_KEY!;
   private geminiUrl = process.env.GEMINI_URL!;
 
+  async executeFullWorkflow(userId: string, className: string) {
+    this.logger.log(`=== STARTING FULL WORKFLOW FOR ${className} ===`);
+
+    // Step 1: Run AI Processing (Batch)
+    const processResult = await this.process(userId, className);
+    if (processResult.status === 'empty' || processResult.status === 'error') {
+       return { step: 'process', error: processResult.message };
+    }
+
+    // Step 2: Merge the processed files
+    const mergeResult = await this.mergeFinalPdfsS3(userId, className);
+    if (mergeResult.status === 'error') {
+        return { step: 'merge', error: mergeResult.message };
+    }
+
+    // Step 3: Split the merged file into final topics
+    const splitResult = await this.splitMergedPdf(userId, className);
+
+    this.logger.log(`=== FULL WORKFLOW COMPLETE FOR ${className} ===`);
+    
+    return {
+        status: 'workflow_complete',
+        processing: processResult,
+        merging: mergeResult,
+        splitting: splitResult
+    };
+  }
+
   // -------------------------------------------------------------------------
-  // 1. Process ALL Files in Class Folder (Batch)
+  // 1. Process the uploaded file
   // -------------------------------------------------------------------------
   async process(userId: string, className: string) {
     const safeClassName = this.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
     const uploadsPrefix = `${userId}/${safeClassName}/uploads/`;
 
-    this.logger.log(`Starting batch processing for class: ${safeClassName}`);
-    this.logger.log(`Looking for files in: ${uploadsPrefix}`);
+    this.logger.log(`[DEBUG] UserID: ${userId} | Class: ${safeClassName}`); // <--- CHECK THIS LOG
+    this.logger.log(`[DEBUG] Bucket: ${this.bucket} | Region: ${process.env.AWS_REGION}`);
 
     const listCommand = new ListObjectsV2Command({
       Bucket: this.bucket,
       Prefix: uploadsPrefix,
     });
 
-    const res: ListObjectsV2CommandOutput = await this.s3.send(listCommand);
-    const s3PdfFiles: string[] = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
+    try {
+      const res: ListObjectsV2CommandOutput = await this.s3.send(listCommand);
+      const s3PdfFiles: string[] = res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
 
-    if (!s3PdfFiles.length) {
-       return { status: 'empty', message: `No PDF files found in ${uploadsPrefix}` };
-    }
-
-    this.logger.log(`Found ${s3PdfFiles.length} files to process.`);
-
-    const results: any[] = [];
-
-    for (const pdfKey of s3PdfFiles) {
-      const baseName = path.basename(pdfKey, '.pdf');
-      const txtKey = `${userId}/${safeClassName}/processed/${baseName}.txt`;
-
-      this.logger.log(`Processing file: ${baseName}`);
-
-      try {
-        const txtBuffer = await this.getFile(txtKey);
-        const pdfBuffer = await this.getFile(pdfKey);
-
-        const aiOutput = await this.askGemini(txtBuffer, pdfBuffer);
-
-        const finalId = Math.random().toString(36).substring(2, 10);
-        const finalPdf = await this.buildPdf(aiOutput, finalId);
-        const finalTxt = Buffer.from(aiOutput, 'utf-8');
-
-        const finalPdfKey = `${userId}/${safeClassName}/final/${finalId}.pdf`;
-        const finalTxtKey = `${userId}/${safeClassName}/final/${finalId}.txt`;
-
-        await this.uploadFile(finalPdfKey, finalPdf, 'application/pdf');
-        await this.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8');
-
-        results.push({
-          status: 'success',
-          baseName: baseName,
-          finalId: finalId,
-          pdfKey: finalPdfKey
-        });
-
-      } catch (error) {
-        this.logger.error(`Failed to process ${baseName}: ${error.message}`);
-        results.push({
-          status: 'error',
-          baseName: baseName,
-          error: error.message
-        });
+      if (!s3PdfFiles.length) {
+         return { status: 'empty', message: `No PDF files found in ${uploadsPrefix}` };
       }
-    }
 
-    return { 
-      status: 'batch_complete', 
-      totalProcessed: results.length,
-      details: results,
-      userId,
-      className: safeClassName
-    };
+      const results: any[] = [];
+
+      for (const pdfKey of s3PdfFiles) {
+        const baseName = path.basename(pdfKey, '.pdf');
+        const txtKey = `${userId}/${safeClassName}/processed/${baseName}.txt`; 
+
+        this.logger.log(`Processing file: ${baseName}`);
+
+        try {
+          // RETRY LOGIC FOR S3 ---
+          const txtBuffer = await this.getFileWithRetry(txtKey); 
+          const pdfBuffer = await this.getFileWithRetry(pdfKey);
+
+          // RETRY LOGIC FOR GEMINI ---
+          const aiOutput = await this.askGeminiWithRetry(txtBuffer, pdfBuffer);
+
+          const finalId = Math.random().toString(36).substring(2, 10);
+          const finalPdf = await this.buildPdf(aiOutput, finalId);
+          const finalTxt = Buffer.from(aiOutput, 'utf-8');
+
+          const finalPdfKey = `${userId}/${safeClassName}/final/${finalId}.pdf`;
+          const finalTxtKey = `${userId}/${safeClassName}/final/${finalId}.txt`;
+
+          await this.uploadFile(finalPdfKey, finalPdf, 'application/pdf');
+          await this.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8');
+
+          results.push({ status: 'success', baseName });
+
+          // Pause for 2 seconds to let the network connection close cleanly
+          this.logger.log('Cooling down network for 2 seconds...');
+          await sleep(2000); 
+
+        } catch (error) {
+          this.logger.error(`Failed to process ${baseName}: ${error.message}`);
+          results.push({ status: 'error', baseName, error: error.message });
+          
+          // Even if it fails, wait a bit so the next file has a chance
+          await sleep(2000);
+        }
+      }
+
+      return { status: 'batch_complete', details: results };
+
+    } catch (error) {
+       this.logger.error(`CRITICAL S3 LIST ERROR: ${error.message}`);
+       throw error;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -603,5 +636,39 @@ RULES:
     }
 
     return lines;
+  }
+
+    // ==========================================
+  // HELPERS (UPDATED FOR STABILITY)
+  // ==========================================
+
+  private async getFileWithRetry(key: string, attempts = 3): Promise<Buffer> {
+    for (let i = 0; i < attempts; i++) {
+        try {
+            return await this.getFile(key);
+        } catch (error) {
+            this.logger.warn(`Attempt ${i + 1} failed for ${key}: ${error.message}`);
+            if (i === attempts - 1) throw error;
+            await sleep(1000 * (i + 1)); // Backoff: 1s, 2s, 3s
+        }
+    }
+    throw new Error('Unreachable code');
+  }
+
+  private async askGeminiWithRetry(txt: Buffer, pdf: Buffer, attempts = 3): Promise<string> {
+    for (let i = 0; i < attempts; i++) {
+        try {
+            return await this.askGemini(txt, pdf);
+        } catch (error) {
+            // Check for specific network errors
+            if (error.message.includes('ECONNRESET') || error.message.includes('ETIMEDOUT')) {
+                this.logger.warn(`Gemini Network Error (Attempt ${i+1}): ${error.message}`);
+                await sleep(2000); // Wait longer for network reset
+                continue;
+            }
+            throw error; // If it's a logic error (400 Bad Request), fail immediately
+        }
+    }
+    throw new Error('Gemini API failed after retries');
   }
 }

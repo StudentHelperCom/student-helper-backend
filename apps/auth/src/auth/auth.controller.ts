@@ -1,4 +1,4 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, Get } from '@nestjs/common';
 import { ApiTags, ApiBody } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { AuthDto } from './auth.dto';
@@ -7,6 +7,11 @@ import { AuthDto } from './auth.dto';
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @Get('health')
+  healthCheck() {
+    return 'OK';
+  }
 
   @Post('register')
   @ApiBody({ type: AuthDto })

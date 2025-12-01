@@ -10,6 +10,12 @@ export class ProcessingController {
     return 'OK';
   }
   
+  @Post('start-workflow')
+  async startWorkflow(@Body() body: { userId: string; className: string }) {
+    // This runs all 3 steps sequentially internally
+    return this.svc.executeFullWorkflow(body.userId, body.className);
+  }
+
   @Post('run')
   runProcessing(@Body() body: { userId: string; className: string }) {
     return this.svc.process(body.userId, body.className);
