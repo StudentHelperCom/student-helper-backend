@@ -8,13 +8,16 @@
             },
             "ssh": "Disabled",
             "previewLimit": 50,
-            "server": "dpg-d42b91juibrs73crhhpg-a.frankfurt-postgres.render.com",
+            "server": "dpg-d4mofqkhg0os73c0qto0-a.frankfurt-postgres.render.com",
             "port": 5432,
+            "sshOptions": {
+                "port": 22
+            },
             "driver": "PostgreSQL",
-            "name": "student_helper_db",
-            "username": "student_helper_db_user",
-            "database": "student_helper_db",
-            "password": "hJ88Ka1PjWVGxqjEWHcUZxpyBBgjcIz4"
+            "name": "student_helper_db_frxm",
+            "database": "student_helper_db_frxm",
+            "username": "student_helper_db_frxm_user",
+            "password": "DWQpUfGXQU8EsIxuPwAf3sJzB8mtNXn3"
         }
     ]
 }
