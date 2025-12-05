@@ -3,7 +3,11 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
-import { pdf } from 'pdf-to-img'; 
+import { pdf } from 'pdf-to-img';
+import { InjectRepository } from '@nestjs/typeorm'; // <--- IMPORT
+import { Repository } from 'typeorm';               // <--- IMPORT
+import { ClassEntity } from './entities/class.entity';
+
 
 @Injectable()
 export class CdnService {
@@ -20,7 +24,10 @@ export class CdnService {
 
   private bucket = process.env.AWS_S3_BUCKET!;
 
-  constructor() {
+  constructor(
+    @InjectRepository(ClassEntity)
+    private classesRepository: Repository<ClassEntity> 
+  ) {
     this.ensureTempDir();
   }
 
@@ -32,11 +39,44 @@ export class CdnService {
     }
   }
 
-  async saveFile(data: { filename: string; content: Buffer; userId: string; className: string }) {
+  async saveFile(data: { 
+    filename: string; 
+    content: Buffer; 
+    userId: string; 
+    className: string;
+    examDate: string;      
+    examLocation: string; 
+  }) {
     const sanitizedFilename = this.sanitizeFilename(data.filename);
     const tempFilePath = path.join(this.tempDir, `temp_${Date.now()}_${sanitizedFilename}`);
 
     try {
+      // 1. === DATABASE LOGIC ===
+      // Check if class exists for this user
+      let classEntity = await this.classesRepository.findOne({ 
+        where: { userId: data.userId, name: data.className } 
+      });
+
+      if (!classEntity) {
+        // Create new
+        classEntity = this.classesRepository.create({
+          userId: data.userId,
+          name: data.className,
+          examDate: data.examDate ? new Date(data.examDate) : undefined,
+          examLocation: data.examLocation
+        });
+      } else {
+        // Update existing (Only if new data is provided)
+        if (data.examDate) classEntity.examDate = new Date(data.examDate);
+        if (data.examLocation) classEntity.examLocation = data.examLocation;
+      }
+      
+      // Save to DB
+      await this.classesRepository.save(classEntity);
+      this.logger.log(`Class info saved: ${classEntity.name} (ID: ${classEntity.id})`);
+
+
+      // 2. === FILE PROCESSING LOGIC ===
       await fs.writeFile(tempFilePath, data.content);
 
       const sanitizedClassName = this.sanitizeFilename(data.className).replace(/\.[^/.]+$/, "");
@@ -47,6 +87,7 @@ export class CdnService {
       const ext = path.extname(sanitizedFilename).toLowerCase();
       let result: any = { 
         filename: sanitizedFilename,
+        classId: classEntity.id, // Returning DB ID is helpful for frontend
         s3OriginalUrl: this.getPublicUrl(s3OriginalKey)
       };
 
@@ -84,7 +125,7 @@ export class CdnService {
       const pdfBuffer = await fs.readFile(pdfPath);
       let text = '';
 
-      // 1. Try Standard Extraction (Fast)
+      // Standard Extraction
       try {
         const pdfExtraction = require('pdf-extraction');
         const data = await pdfExtraction(pdfBuffer);
@@ -93,27 +134,21 @@ export class CdnService {
         this.logger.warn(`Standard extraction failed: ${e.message}`);
       }
 
-      // 2. Fallback to OCR (Scan detection)
+      // OCR Fallback
       if (!text || text.length < 50) {
-        this.logger.warn(`PDF ${originalFilename} appears scanned. Starting OCR with Puppeteer...`);
-        
+        this.logger.warn(`PDF ${originalFilename} appears scanned. Starting OCR...`);
         const worker = await createWorker('eng+pol');
         text = '';
-        
-        // This yields Buffer objects of each page image
         const document = await pdf(pdfPath, { scale: 2.0 }); 
 
         for await (const image of document) {
            const { data: { text: pageText } } = await worker.recognize(image);
            text += pageText + '\n\n';
         }
-        
         await worker.terminate();
       }
       
-      if (!text.trim()) {
-        text = "[ERROR: No text found even after OCR]";
-      }
+      if (!text.trim()) text = "[ERROR: No text found even after OCR]";
       
       await fs.writeFile(txtPath, text, 'utf8');
       return txtPath;
@@ -127,9 +162,7 @@ export class CdnService {
   private async processImage(imagePath: string, originalFilename: string): Promise<string> {
     const baseName = path.basename(originalFilename, path.extname(originalFilename));
     const txtPath = path.join(this.tempDir, `${baseName}_${Date.now()}.txt`);
-
     const worker = await createWorker('eng+pol');
-
     try {
       const { data: { text } } = await worker.recognize(imagePath);
       await fs.writeFile(txtPath, text, 'utf8');

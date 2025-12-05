@@ -44,7 +44,7 @@ export class CdnController {
   @Post('upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files', 10))
-  @ApiOperation({ summary: 'Upload the file on the S3 server' })
+  @ApiOperation({ summary: 'Upload files and create/update Class info' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -53,8 +53,21 @@ export class CdnController {
       properties: {
         className: { 
             type: 'string',
-            description: 'The name of the class/category for the folder' 
+            description: 'The name of the class' 
         },
+        // --- NEW FIELDS ---
+        examDate: { 
+            type: 'string', 
+            format: 'date-time', // Hints Swagger to show a date picker
+            description: 'Date of the exam (ISO 8601)',
+            example: '2025-06-15T09:00:00Z'
+        },
+        examLocation: { 
+            type: 'string', 
+            description: 'Location of the exam',
+            example: 'Room 304'
+        },
+        // ------------------
         files: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
@@ -64,7 +77,8 @@ export class CdnController {
   })
   async uploadFiles(
     @UploadedFiles() files: Express.Multer.File[], 
-    @Body() body: { className: string }, 
+    // Capture the new fields from the body
+    @Body() body: { className: string; examDate?: string; examLocation?: string }, 
     @Req() req
   ) {
     const user = req.user;
@@ -77,23 +91,31 @@ export class CdnController {
         throw new BadRequestException('Class name is required');
     }
 
+    // MAP THE PAYLOAD TO MATCH THE CDN MICROSERVICE DTO
     const payload = files.map(file => ({
       filename: file.originalname,
       content: file.buffer.toString('base64'),
       userId: user.userId,
-      className: body.className 
+      className: body.className,
+      // Pass the optional fields down to the microservice
+      examDate: body.examDate, 
+      examLocation: body.examLocation
     }));
 
     const cdnUrl = `${process.env.CDN_URL!}/cdn/upload`;
 
     try {
+      this.logger.log(`Forwarding upload for User [${user.userId}] to CDN...`);
       const response = await firstValueFrom(
         this.httpService.post(cdnUrl, payload)
       );
       return response.data;
     } catch (error) {
       this.logger.error(`Upload failed for User [${user.userId}]: ${error.message}`);
-      throw new BadRequestException('Failed to upload files to CDN service');
+      // Improve error message passing from microservice
+      throw new BadRequestException(
+          error.response?.data?.message || 'Failed to upload files to CDN service'
+      );
     }
   }
 }

@@ -3,6 +3,8 @@ import { CdnService } from './cdn.service';
 import { CdnController } from './cdn.controller';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm'
+import { ClassEntity } from './entities/class.entity';
 
 @Module({
   controllers: [CdnController],
@@ -11,6 +13,21 @@ import { ConfigModule } from '@nestjs/config';
     HttpModule,
     ConfigModule.forRoot({
       isGlobal: true,
-    })]
+    }),
+    TypeOrmModule.forFeature([ClassEntity]),
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      host: process.env.DB_HOST!,
+      port: 5432,
+      username: process.env.DB_USER!,
+      password: process.env.DB_PASS!,
+      database: process.env.DB_NAME!,
+      entities: [ClassEntity],
+      synchronize: true,
+      ssl: { rejectUnauthorized: false },
+      autoLoadEntities: true,
+    }),
+  
+  ]
 })
 export class CdnModule {}
