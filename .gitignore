@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # Dependencies
@@ -37,7 +36,6 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
-=======
 # compiled output
 /dist
 /node_modules
@@ -94,4 +92,3 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
->>>>>>> 69de5cdc040d5eacc5fd4b194d4fe285f93c25e5

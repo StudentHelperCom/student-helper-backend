@@ -132,7 +132,7 @@ export class ProcessingHelpers {
     pdf.registerFontkit(fontkit);
 
     const regularFontBytes = fs.readFileSync(
-      path.join(__dirname, '..', 'assets', 'fonts', 'DejaVuSans.ttf')
+      path.join(__dirname, '..','..', 'assets', 'fonts', 'DejaVuSans.ttf')
     );
 
     const font = await pdf.embedFont(regularFontBytes);

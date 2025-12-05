@@ -52,7 +52,7 @@ export class CdnController {
 
   // Helper to call the other Microservicex
   private async triggerProcessing(userId: string, className: string) {
-      const processingUrl = `${process.env.PROCESSING_URL}/processing/start-workflow`;
+      const processingUrl = `${process.env.PROCESSING_URL!}/processing/start-workflow`;
       
       this.logger.log(`Triggering processing for Class: ${className}, User: ${userId}`);
 
