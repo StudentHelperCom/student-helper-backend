@@ -3,8 +3,7 @@ import { CdnService } from './cdn.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApiBody, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-// Make sure this path matches where you created the file
-import { UploadFileDto } from './dtos/upload-file.dto'; 
+import { UploadFileDto } from './dtos/upload-file.dto';
 
 @ApiTags('CDN')
 @Controller('cdn')
@@ -17,16 +16,12 @@ export class CdnController {
   ) {}
 
   @Get('health')
-  @ApiOperation({ summary: 'Health check endpoint' })
-  @ApiResponse({ status: 200, description: 'Service is healthy' })
-  healthCheck() { 
-    return 'OK'; 
-  }
+  healthCheck() { return 'OK'; }
   
   @Post('upload')
   @ApiOperation({ summary: 'Upload batch of files' })
   @ApiResponse({ status: 201, description: 'Files uploaded and processing started.' })
-  @ApiBody({ type: [UploadFileDto] }) // Explicitly tells Swagger this is an Array of Objects
+  @ApiBody({ type: [UploadFileDto] }) 
   async uploadFiles(@Body() data: UploadFileDto[]) {
     
     if (!data || data.length === 0) {
@@ -34,30 +29,26 @@ export class CdnController {
     }
 
     const results: any[] = [];
+    const { userId } = data[0]; 
 
-    // 1. Capture details from the first file to identify the batch
-    const { userId, className } = data[0];
-
-    // 2. Save all files to S3 AND Database
     for (const file of data) {
-      // Decode base64 content
       const buffer = Buffer.from(file.content, 'base64');
-      
       results.push(
         await this.cdnService.saveFile({
           filename: file.filename,
           content: buffer,
           userId: file.userId,
           className: file.className,
-          examDate: file.examDate ?? '', 
-          examLocation: file.examLocation ?? '' 
+          examDate: file.examDate || '',       
+          examLocation: file.examLocation || '' 
         })
       );
     }
 
-    // 3. Trigger Processing Service (Background Task)
-    // We do not await this because we don't want to block the response
-    this.triggerProcessing(userId, className); 
+    // --- CHANGE: Get classId from result and trigger processing ---
+    // We assume all files in one batch belong to the same class
+    const classId = results[0].classId;
+    this.triggerProcessing(userId, classId); 
 
     return { 
         uploadStatus: 'success', 
@@ -67,24 +58,20 @@ export class CdnController {
     };
   }
 
-  // --- HELPER METHODS ---
-
-  private async triggerProcessing(userId: string, className: string) {
+  private async triggerProcessing(userId: string, classId: string) {
       const processingUrl = `${process.env.PROCESSING_URL!}/processing/start-workflow`;
-      this.logger.log(`Triggering processing for Class: ${className}, User: ${userId}`);
+      this.logger.log(`Triggering processing for Class ID: ${classId}`);
 
       try {
-        // We use firstValueFrom to convert the Observable to a Promise
         await firstValueFrom(
-            this.httpService.post(processingUrl, { userId, className }, {
-                timeout: 300000 // 5 minutes timeout
+            // --- CHANGE: Payload now sends classId instead of className
+            this.httpService.post(processingUrl, { userId, classId }, {
+                timeout: 300000 
             })
         );
         this.logger.log('Processing workflow completed successfully.');
       } catch (error) {
           this.logger.error(`Failed to trigger processing: ${error.message}`);
-          // Note: We swallow the error here so the User still sees "uploadStatus: success"
-          // You might want to implement a retry mechanism or alert system here.
       }
   }
 }

@@ -44,30 +44,16 @@ export class CdnController {
   @Post('upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files', 10))
-  @ApiOperation({ summary: 'Upload files and create/update Class info' })
+  @ApiOperation({ summary: 'Upload files to Class (returns classId)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
       required: ['className', 'files'], 
       properties: {
-        className: { 
-            type: 'string',
-            description: 'The name of the class' 
-        },
-        // --- NEW FIELDS ---
-        examDate: { 
-            type: 'string', 
-            format: 'date-time', // Hints Swagger to show a date picker
-            description: 'Date of the exam (ISO 8601)',
-            example: '2025-06-15T09:00:00Z'
-        },
-        examLocation: { 
-            type: 'string', 
-            description: 'Location of the exam',
-            example: 'Room 304'
-        },
-        // ------------------
+        className: { type: 'string', description: 'The name of the class' },
+        examDate: { type: 'string', format: 'date-time', example: '2025-06-15T09:00:00' },
+        examLocation: { type: 'string', example: 'Room 304' },
         files: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
@@ -77,27 +63,19 @@ export class CdnController {
   })
   async uploadFiles(
     @UploadedFiles() files: Express.Multer.File[], 
-    // Capture the new fields from the body
     @Body() body: { className: string; examDate?: string; examLocation?: string }, 
     @Req() req
   ) {
     const user = req.user;
 
-    if (!files || files.length === 0) {
-      throw new BadRequestException('No files uploaded');
-    }
+    if (!files || files.length === 0) throw new BadRequestException('No files uploaded');
+    if (!body.className) throw new BadRequestException('Class name is required');
 
-    if (!body.className) {
-        throw new BadRequestException('Class name is required');
-    }
-
-    // MAP THE PAYLOAD TO MATCH THE CDN MICROSERVICE DTO
     const payload = files.map(file => ({
       filename: file.originalname,
       content: file.buffer.toString('base64'),
       userId: user.userId,
       className: body.className,
-      // Pass the optional fields down to the microservice
       examDate: body.examDate, 
       examLocation: body.examLocation
     }));
@@ -105,17 +83,126 @@ export class CdnController {
     const cdnUrl = `${process.env.CDN_URL!}/cdn/upload`;
 
     try {
-      this.logger.log(`Forwarding upload for User [${user.userId}] to CDN...`);
+      // The response from CDN Service will now contain { classId: "..." }
+      // The Frontend should save this ID!
+      const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Upload failed: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Upload failed');
+    }
+  }
+}
+
+// =========================================================================
+// === UPDATED PROCESSING CONTROLLER ===
+// =========================================================================
+
+@ApiTags('Processing')
+@ApiBearerAuth()
+@Controller('processing')
+export class ProcessingController {
+  private readonly logger = new Logger(ProcessingController.name);
+
+  constructor(private readonly httpService: HttpService) {}
+
+  @Get('health')
+  @ApiOperation({ summary: 'Health check' })
+  healthCheck() { return 'OK'; }
+
+  @Post('run')
+  @UseGuards(JwtAuthGuard) 
+  @ApiOperation({ summary: 'Manually trigger processing for a Class ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['classId'], // Changed from className
+      properties: {
+        classId: { type: 'string', example: 'uuid-1234-5678', description: 'The UUID of the class returned by upload' }
+      },
+    }
+  })
+  async runProcessing(@Body() body: { classId: string }, @Req() req) {
+    if (!body.classId) throw new BadRequestException('classId is required');
+
+    const processingUrl = `${process.env.PROCESSING_URL!}/processing/run`;
+    
+    // UPDATED PAYLOAD: Only sending classId
+    const payload = { classId: body.classId };
+
+    try {
+      this.logger.log(`Requesting batch processing for Class ID [${body.classId}]`);
       const response = await firstValueFrom(
-        this.httpService.post(cdnUrl, payload)
+        this.httpService.post(processingUrl, payload, {
+          timeout: 180000,
+          headers: { 'Content-Type': 'application/json' }
+        })
       );
       return response.data;
     } catch (error) {
-      this.logger.error(`Upload failed for User [${user.userId}]: ${error.message}`);
-      // Improve error message passing from microservice
-      throw new BadRequestException(
-          error.response?.data?.message || 'Failed to upload files to CDN service'
+      throw new BadRequestException(error.response?.data?.message || 'Processing failed');
+    }
+  }
+
+  @Post('merge')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Merge PDFs for a Class ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['classId'],
+      properties: {
+        classId: { type: 'string', example: 'uuid-1234-5678' }
+      },
+    }
+  })
+  async mergePdfs(@Body() body: { classId: string }, @Req() req) {
+    if (!body.classId) throw new BadRequestException('classId is required');
+
+    const processingUrl = `${process.env.PROCESSING_URL!}/processing/merge`;
+    const payload = { classId: body.classId };
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(processingUrl, payload, {
+          timeout: 120000,
+          headers: { 'Content-Type': 'application/json' }
+        })
       );
+      return response.data;
+    } catch (error) {
+      throw new BadRequestException(error.response?.data?.message || 'Merge failed');
+    }
+  }
+
+  @Post('split')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Split merged PDF for a Class ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['classId'],
+      properties: {
+        classId: { type: 'string', example: 'uuid-1234-5678' }
+      },
+    }
+  })
+  async splitMergedPdf(@Body() body: { classId: string }, @Req() req) {
+    if (!body.classId) throw new BadRequestException('classId is required');
+
+    const processingUrl = `${process.env.PROCESSING_URL!}/processing/split`;
+    const payload = { classId: body.classId };
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(processingUrl, payload, {
+          timeout: 120000,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+      return response.data;
+    } catch (error) {
+      throw new BadRequestException(error.response?.data?.message || 'Split failed');
     }
   }
 }
@@ -191,159 +278,4 @@ export class AuthController {
   }
 }
 
-@ApiTags('Processing')
-@ApiBearerAuth()
-@Controller('processing')
-export class ProcessingController {
-  private readonly logger = new Logger(ProcessingController.name);
 
-  constructor(private readonly httpService: HttpService) {}
-
-  @Get('health')
-  @ApiOperation({ summary: 'Health check' })
-  healthCheck() {
-    return 'OK';
-  }
-
-  @Post('run')
-  @UseGuards(JwtAuthGuard) 
-  @ApiOperation({ summary: 'Process ALL PDF files within a class folder' }) // Updated summary
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['className'],
-      properties: {
-        className: { type: 'string', example: 'History 101', description: 'Folder name containing files to process' }
-      },
-    }
-  })
-  async runProcessing(
-    @Body() body: { className: string }, // Removed filename from DTO
-    @Req() req
-  ) {
-    const user = req.user;
-
-    if (!body.className) {
-      throw new BadRequestException('className is required');
-    }
-
-    const processingUrl = `${process.env.PROCESSING_URL!}/processing/run`;
-
-    // Construct payload matching the NEW Microservice signature (userId + className only)
-    const payload = {
-      userId: user.userId,
-      className: body.className
-    };
-
-    try {
-      this.logger.log(`Requesting batch processing for User [${user.userId}], Class [${body.className}]`);
-      
-      const response = await firstValueFrom(
-        this.httpService.post(processingUrl, payload, {
-          timeout: 180000, // Increased timeout because batch processing takes longer
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-
-      return response.data;
-
-    } catch (error) {
-      this.logger.error(`Processing service error: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Failed to process documents');
-    }
-  }
-
-  @Post('merge')
-  @UseGuards(JwtAuthGuard) // <-- Protects route to get userId
-  @ApiOperation({ summary: 'Merge all final PDFs in a class folder into one deduplicated PDF' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['className'],
-      properties: {
-        className: { type: 'string', example: 'History 101', description: 'Folder name to merge files from' }
-      },
-    }
-  })
-  async mergePdfs(
-    @Body() body: { className: string },
-    @Req() req
-  ) {
-    const user = req.user;
-
-    if (!body.className) {
-      throw new BadRequestException('className is required');
-    }
-
-    const processingUrl = `${process.env.PROCESSING_URL!}/processing/merge`;
-
-    // Construct payload matching the Microservice signature
-    const payload = {
-      userId: user.userId,
-      className: body.className
-    };
-
-    try {
-      this.logger.log(`Requesting merge for User [${user.userId}], Class [${body.className}]`);
-
-      const response = await firstValueFrom(
-        this.httpService.post(processingUrl, payload, {
-          timeout: 120000,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-
-      return response.data;
-
-    } catch (error) {
-      this.logger.error(`Merge service error: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Failed to merge PDFs');
-    }
-  }
-  @Post('split')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Split the final merged PDF into individual topic PDFs (t1.pdf, t2.pdf...)' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['className'],
-      properties: {
-        className: { type: 'string', example: 'History 101', description: 'Folder name containing the merge' }
-      },
-    }
-  })
-  async splitMergedPdf(
-    @Body() body: { className: string },
-    @Req() req
-  ) {
-    const user = req.user;
-
-    if (!body.className) {
-      throw new BadRequestException('className is required');
-    }
-
-    const processingUrl = `${process.env.PROCESSING_URL!}/processing/split`;
-
-    const payload = {
-      userId: user.userId,
-      className: body.className
-    };
-
-    try {
-      this.logger.log(`Requesting split for User [${user.userId}], Class [${body.className}]`);
-
-      const response = await firstValueFrom(
-        this.httpService.post(processingUrl, payload, {
-          timeout: 120000,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-
-      return response.data;
-
-    } catch (error) {
-      this.logger.error(`Split service error: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Failed to split PDF');
-    }
-  }
-}

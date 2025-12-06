@@ -7,49 +7,61 @@ import { ProcessingAi } from './helpers/processing.ai';
 export class ProcessingService {
   private readonly logger = new Logger(ProcessingService.name);
 
-  // === CONSTRUCTOR INJECTION ===
   constructor(
     private readonly helpers: ProcessingHelpers,
     private readonly aiService: ProcessingAi
   ) {}
 
-  async executeFullWorkflow(userId: string, className: string) {
-    this.logger.log(`=== STARTING FULL WORKFLOW FOR ${className} ===`);
+  async executeFullWorkflow(classId: string) {
+    this.logger.log(`=== STARTING FULL WORKFLOW FOR CLASS ID: ${classId} ===`);
 
     // Step 1: Run AI Processing (Batch)
-    const processResult = await this.process(userId, className);
+    // Reads from 'uploads/' -> Writes to 'final/'
+    const processResult = await this.process(classId);
     if (processResult.status === 'empty' || processResult.status === 'error') {
        return { step: 'process', error: processResult.message };
     }
 
     // Step 2: Merge the processed files
-    const mergeResult = await this.mergeFinalPdfsS3(userId, className);
+    // Reads from 'final/' -> Writes 'Final_Merged.pdf' to root
+    const mergeResult = await this.mergeFinalPdfsS3(classId);
     if (mergeResult.status === 'error') {
-        return { step: 'merge', error: mergeResult.message };
+       return { step: 'merge', error: mergeResult.message };
     }
 
     // Step 3: Split the merged file into final topics
-    const splitResult = await this.splitMergedPdf(userId, className);
+    // Reads 'Final_Merged.txt' -> Writes 't1.pdf', 't2.pdf' to root
+    const splitResult = await this.splitMergedPdf(classId);
 
-    this.logger.log(`=== FULL WORKFLOW COMPLETE FOR ${className} ===`);
+    // === STEP 4: CLEANUP ===
+    // Now that we have the final result, we delete the source files
+    this.logger.log(`Work complete. Deleting source folders for ${classId}...`);
+    
+    try {
+        await this.helpers.deleteFolderContents(`${classId}/uploads/`);
+        await this.helpers.deleteFolderContents(`${classId}/processed/`);
+        // Note: mergeFinalPdfsS3 already cleaned up 'final/'
+        this.logger.log('Cleanup successful.');
+    } catch (error) {
+        this.logger.warn(`Cleanup failed (non-critical): ${error.message}`);
+    }
+
+    this.logger.log(`=== FULL WORKFLOW COMPLETE FOR ${classId} ===`);
     
     return {
-        status: 'workflow_complete',
-        processing: processResult,
-        merging: mergeResult,
-        splitting: splitResult
+       status: 'workflow_complete',
+       processing: processResult,
+       merging: mergeResult,
+       splitting: splitResult
     };
   }
 
   // -------------------------------------------------------------------------
   // 1. Process the uploaded file
   // -------------------------------------------------------------------------
-  async process(userId: string, className: string) {
-    // USE HELPER
-    const safeClassName = this.helpers.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
-    const uploadsPrefix = `${userId}/${safeClassName}/uploads/`;
+  async process(classId: string) {
+    const uploadsPrefix = `${classId}/uploads/`;
 
-    // USE HELPER (Make sure you added the listPdfFiles method I showed in Step 2)
     const s3PdfFiles = await this.helpers.listPdfFiles(uploadsPrefix);
 
     if (!s3PdfFiles.length) {
@@ -60,40 +72,34 @@ export class ProcessingService {
 
     for (const pdfKey of s3PdfFiles) {
        const baseName = path.basename(pdfKey, '.pdf');
-       const txtKey = `${userId}/${safeClassName}/processed/${baseName}.txt`; 
+       const txtKey = `${classId}/processed/${baseName}.txt`; 
 
        this.logger.log(`Processing file: ${baseName}`);
 
        try {
-         // USE HELPER
          const txtBuffer = await this.helpers.getFileWithRetry(txtKey); 
          const pdfBuffer = await this.helpers.getFileWithRetry(pdfKey);
 
-         // USE HELPER
          const aiOutput = await this.aiService.askGeminiWithRetry(txtBuffer, pdfBuffer);
 
          const finalId = Math.random().toString(36).substring(2, 10);
-         // USE HELPER
          const finalPdf = await this.helpers.buildPdf(aiOutput, finalId);
          const finalTxt = Buffer.from(aiOutput, 'utf-8');
 
-         const finalPdfKey = `${userId}/${safeClassName}/final/${finalId}.pdf`;
-         const finalTxtKey = `${userId}/${safeClassName}/final/${finalId}.txt`;
+         const finalPdfKey = `${classId}/final/${finalId}.pdf`;
+         const finalTxtKey = `${classId}/final/${finalId}.txt`;
 
-         // USE HELPER
          await this.helpers.uploadFile(finalPdfKey, finalPdf, 'application/pdf');
          await this.helpers.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8');
 
          results.push({ status: 'success', baseName });
 
          this.logger.log('Cooling down network for 2 seconds...');
-         // USE HELPER
          await this.helpers.sleep(2000); 
 
        } catch (error) {
          this.logger.error(`Failed to process ${baseName}: ${error.message}`);
          results.push({ status: 'error', baseName, error: error.message });
-         
          await this.helpers.sleep(2000);
        }
     }
@@ -104,14 +110,12 @@ export class ProcessingService {
   // -------------------------------------------------------------------------
   // 2. Merge All Final PDFs 
   // -------------------------------------------------------------------------
-  async mergeFinalPdfsS3(userId: string, className: string) {
-    const safeClassName = this.helpers.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
-    const rootFolderPrefix = `${userId}/${safeClassName}/`;
+  async mergeFinalPdfsS3(classId: string) {
+    const rootFolderPrefix = `${classId}/`;
     const finalSubfolderPrefix = `${rootFolderPrefix}final/`;
 
     this.logger.log(`Listing files to merge from: ${finalSubfolderPrefix}`);
 
-    // USE HELPER
     const s3PdfFiles = await this.helpers.listPdfFiles(finalSubfolderPrefix);
 
     if (!s3PdfFiles.length) {
@@ -125,10 +129,8 @@ export class ProcessingService {
     for (const pdfKey of s3PdfFiles) {
       try {
         const txtKey = pdfKey.replace('.pdf', '.txt');
-        // USE HELPER
         const txtBuffer = await this.helpers.getFile(txtKey);
-        const content = txtBuffer.toString();
-        allTextContent += `\n\n=== CONTENT FROM ${path.basename(pdfKey)} ===\n${content}`;
+        allTextContent += `\n\n=== CONTENT FROM ${path.basename(pdfKey)} ===\n${txtBuffer.toString()}`;
       } catch (error) {
         this.logger.error(`Error getting text content from ${pdfKey}:`, error);
       }
@@ -138,20 +140,18 @@ export class ProcessingService {
       return { status: 'error', message: 'No text content found to merge.' };
     }
 
-    // USE HELPER
     const mergedContent = await this.aiService.askGeminiToMerge(allTextContent);
 
-    // Prepare Final Files
     const mergeId = Math.random().toString(36).substring(2, 10);
     const finalPdfBuffer = await this.helpers.buildPdf(mergedContent, mergeId);
     const finalTxtBuffer = Buffer.from(mergedContent, 'utf-8');
     
-    const finalPdfKey = `${rootFolderPrefix}Final_Merged_${safeClassName}.pdf`;
-    const finalTxtKey = `${rootFolderPrefix}Final_Merged_${safeClassName}.txt`;
+    const finalPdfKey = `${rootFolderPrefix}Final_Merged_${classId}.pdf`;
+    const finalTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
-    this.logger.log(`Cleaning up all files in ${rootFolderPrefix}...`);
-    // USE HELPER
-    await this.helpers.deleteFolderContents(rootFolderPrefix);
+    // 1. Delete the "final/" subfolder (Individual AI summaries)
+    this.logger.log(`Cleaning up intermediate AI files...`);
+    await this.helpers.deleteFolderContents(finalSubfolderPrefix); 
 
     this.logger.log(`Uploading final merged files...`);
     await this.helpers.uploadFile(finalPdfKey, finalPdfBuffer, 'application/pdf');
@@ -159,26 +159,23 @@ export class ProcessingService {
 
     return {
       status: 'ok',
-      message: 'Merge complete. Cleanup done. Created PDF and TXT.',
-      finalPdfKey: finalPdfKey,
-      finalTxtKey: finalTxtKey
+      message: 'Merge complete. Intermediate AI files deleted.',
+      finalPdfKey,
+      finalTxtKey
     };
   }
 
   // -------------------------------------------------------------------------
   // 3. Split Merged TXT into Topic PDFs 
   // -------------------------------------------------------------------------
-  async splitMergedPdf(userId: string, className: string) {
-    const safeClassName = this.helpers.sanitizeFilename(className).replace(/\.[^/.]+$/, "");
-    const rootFolderPrefix = `${userId}/${safeClassName}/`;
-    
-    const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${safeClassName}.txt`;
+  async splitMergedPdf(classId: string) {
+    const rootFolderPrefix = `${classId}/`;
+    const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
     this.logger.log(`Attempting to split topics from: ${mergedTxtKey}`);
 
     let fullText = '';
     try {
-      // USE HELPER
       const buffer = await this.helpers.getFile(mergedTxtKey);
       fullText = buffer.toString('utf-8');
     } catch (error) {
@@ -186,14 +183,12 @@ export class ProcessingService {
       throw new Error('Merged text file not found. Please run merge first.');
     }
 
-    // --- LOGIC START (This logic stays in the service as it's specific business logic) ---
     const lines = fullText.split('\n');
     const topics: { number: string; content: string }[] = [];
     
     let currentTopicNumber = 0; 
     let currentTopicString = ''; 
     let currentContent: string[] = [];
-
     const literatureKeywords = ['bibliografia', 'literatura', 'źródła', 'wykaz', 'references', 'bibliography'];
     let isInsideLiterature = false;
 
@@ -208,14 +203,11 @@ export class ProcessingService {
         const isNextTopic = foundNumber === currentTopicNumber + 1;
 
         if (isSequenceReset || (isInsideLiterature && !isNextTopic)) {
-             const maskedLine = line.replace('.', ')');
-             currentContent.push(maskedLine);
+             currentContent.push(line.replace('.', ')'));
              continue; 
         }
 
-        if (currentTopicString) {
-            topics.push({ number: currentTopicString, content: currentContent.join('\n') });
-        }
+        if (currentTopicString) topics.push({ number: currentTopicString, content: currentContent.join('\n') });
 
         currentTopicNumber = foundNumber;
         currentTopicString = match[1];
@@ -223,23 +215,17 @@ export class ProcessingService {
         isInsideLiterature = literatureKeywords.some(keyword => topicTitle.includes(keyword));
 
       } else {
-        if (currentTopicString) {
-            currentContent.push(line);
-        }
+        if (currentTopicString) currentContent.push(line);
       }
     }
 
     if (currentTopicString && currentContent.length > 0) {
         topics.push({ number: currentTopicString, content: currentContent.join('\n') });
     }
-    // --- LOGIC END ---
-
-    this.logger.log(`Found ${topics.length} actual topics to generate.`);
 
     const generatedFiles: string[] = [];
 
     for (const topic of topics) {
-        // USE HELPER
         const pdfBuffer = await this.helpers.buildPdf(topic.content, 'temp');
         const fileName = `t${topic.number}.pdf`;
         const finalKey = `${rootFolderPrefix}${fileName}`;
@@ -249,8 +235,6 @@ export class ProcessingService {
     }
 
     this.logger.log('Deleting merged TXT file (keeping PDF)...');
-    
-    // USE HELPER
     await this.helpers.deleteFile(mergedTxtKey);
 
     return {

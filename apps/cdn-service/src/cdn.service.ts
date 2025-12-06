@@ -4,10 +4,9 @@ import * as path from 'path';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
 import { pdf } from 'pdf-to-img';
-import { InjectRepository } from '@nestjs/typeorm'; // <--- IMPORT
-import { Repository } from 'typeorm';               // <--- IMPORT
+import { InjectRepository } from '@nestjs/typeorm'; 
+import { Repository } from 'typeorm';                
 import { ClassEntity } from './entities/class.entity';
-
 
 @Injectable()
 export class CdnService {
@@ -44,7 +43,7 @@ export class CdnService {
     content: Buffer; 
     userId: string; 
     className: string;
-    examDate: string;      
+    examDate: string;       
     examLocation: string; 
   }) {
     const sanitizedFilename = this.sanitizeFilename(data.filename);
@@ -52,13 +51,12 @@ export class CdnService {
 
     try {
       // 1. === DATABASE LOGIC ===
-      // Check if class exists for this user
+      // Find or Create Class to get the UUID
       let classEntity = await this.classesRepository.findOne({ 
         where: { userId: data.userId, name: data.className } 
       });
 
       if (!classEntity) {
-        // Create new
         classEntity = this.classesRepository.create({
           userId: data.userId,
           name: data.className,
@@ -66,28 +64,26 @@ export class CdnService {
           examLocation: data.examLocation
         });
       } else {
-        // Update existing (Only if new data is provided)
         if (data.examDate) classEntity.examDate = new Date(data.examDate);
         if (data.examLocation) classEntity.examLocation = data.examLocation;
       }
       
-      // Save to DB
       await this.classesRepository.save(classEntity);
-      this.logger.log(`Class info saved: ${classEntity.name} (ID: ${classEntity.id})`);
-
+      const classId = classEntity.id; // <--- WE NEED THIS UUID
 
       // 2. === FILE PROCESSING LOGIC ===
       await fs.writeFile(tempFilePath, data.content);
 
-      const sanitizedClassName = this.sanitizeFilename(data.className).replace(/\.[^/.]+$/, "");
-      const s3OriginalKey = `${data.userId}/${sanitizedClassName}/uploads/${sanitizedFilename}`;
+      // --- NEW PATH: {classUUID}/uploads/{filename} ---
+      const s3OriginalKey = `${classId}/uploads/${sanitizedFilename}`;
       
       await this.uploadToS3(s3OriginalKey, data.content);
 
       const ext = path.extname(sanitizedFilename).toLowerCase();
+      
       let result: any = { 
         filename: sanitizedFilename,
-        classId: classEntity.id, // Returning DB ID is helpful for frontend
+        classId: classId, // Return ID for the controller
         s3OriginalUrl: this.getPublicUrl(s3OriginalKey)
       };
 
@@ -101,7 +97,8 @@ export class CdnService {
 
       if (tempTextPath) {
         const textContent = await fs.readFile(tempTextPath, 'utf8');
-        const s3TextKey = `${data.userId}/${sanitizedClassName}/processed/${path.basename(sanitizedFilename, ext)}.txt`;
+        // --- NEW PATH: {classUUID}/processed/{filename}.txt ---
+        const s3TextKey = `${classId}/processed/${path.basename(sanitizedFilename, ext)}.txt`;
         
         await this.uploadToS3(s3TextKey, Buffer.from(textContent, 'utf8'));
         result.s3TextUrl = this.getPublicUrl(s3TextKey);
@@ -118,14 +115,12 @@ export class CdnService {
     }
   }
 
+  // ... (Keep existing processPdfTextOnly, processImage, sanitizeFilename, uploadToS3, getPublicUrl) ...
   private async processPdfTextOnly(pdfPath: string, originalFilename: string): Promise<string> {
     const txtPath = path.join(this.tempDir, `${path.basename(originalFilename)}.txt`);
-
     try {
       const pdfBuffer = await fs.readFile(pdfPath);
       let text = '';
-
-      // Standard Extraction
       try {
         const pdfExtraction = require('pdf-extraction');
         const data = await pdfExtraction(pdfBuffer);
@@ -133,26 +128,20 @@ export class CdnService {
       } catch (e) {
         this.logger.warn(`Standard extraction failed: ${e.message}`);
       }
-
-      // OCR Fallback
       if (!text || text.length < 50) {
         this.logger.warn(`PDF ${originalFilename} appears scanned. Starting OCR...`);
         const worker = await createWorker('eng+pol');
         text = '';
         const document = await pdf(pdfPath, { scale: 2.0 }); 
-
         for await (const image of document) {
            const { data: { text: pageText } } = await worker.recognize(image);
            text += pageText + '\n\n';
         }
         await worker.terminate();
       }
-      
       if (!text.trim()) text = "[ERROR: No text found even after OCR]";
-      
       await fs.writeFile(txtPath, text, 'utf8');
       return txtPath;
-
     } catch (err) {
       this.logger.error(`PDF Parse failed for ${originalFilename}`, err);
       throw err;
