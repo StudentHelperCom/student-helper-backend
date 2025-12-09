@@ -18,7 +18,7 @@ async function bootstrap() {
   }));
   
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Student Helper API Gateway')
+    .setTitle('Student Helper API')
     .setDescription('Microservice Gateway for Student Helper App')
     .setVersion('1.0')
     .addTag('CDN')

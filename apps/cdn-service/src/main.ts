@@ -8,8 +8,8 @@ async function bootstrap() {
   
   const port = parseInt(process.env.PORT!, 10);
   
-  app.use(json({ limit: '50mb' })); // For JSON payloads
-  app.use(urlencoded({ extended: true, limit: '50mb' })); // For URL-encoded data
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ extended: true, limit: '50mb' }));
   
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,

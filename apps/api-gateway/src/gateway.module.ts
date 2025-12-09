@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './common/jwt.strategy';
-import { TerminusModule } from '@nestjs/terminus';
 import { CdnController, AuthController, ProcessingController, HealthController } from './gateway.controller';
 
 @Module({
@@ -18,8 +17,7 @@ import { CdnController, AuthController, ProcessingController, HealthController }
         maxRedirects: 5,
       }),
     }),
-    PassportModule,
-    TerminusModule
+    PassportModule
   ],
   controllers: [CdnController, AuthController, ProcessingController, HealthController],
   providers: [JwtStrategy], 

@@ -4,6 +4,7 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApiBody, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { UploadFileDto } from './dtos/upload-file.dto';
+import { CreateClassDto } from './entities/create-class.dto';
 
 @ApiTags('CDN')
 @Controller('cdn')
@@ -17,6 +18,14 @@ export class CdnController {
 
   @Get('health')
   healthCheck() { return 'OK'; }
+
+  @Post('create-class')
+  @ApiOperation({ summary: 'Create or Update a class' })
+  async createClass(@Body() body: CreateClassDto) {
+      this.logger.log(`Received CreateClass Request: ${JSON.stringify(body)}`); 
+      
+      return this.cdnService.createClass(body);
+  }
   
   @Post('upload')
   @ApiOperation({ summary: 'Upload batch of files' })
@@ -39,14 +48,10 @@ export class CdnController {
           content: buffer,
           userId: file.userId,
           className: file.className,
-          examDate: file.examDate || '',       
-          examLocation: file.examLocation || '' 
         })
       );
     }
 
-    // --- CHANGE: Get classId from result and trigger processing ---
-    // We assume all files in one batch belong to the same class
     const classId = results[0].classId;
     this.triggerProcessing(userId, classId); 
 
@@ -61,10 +66,8 @@ export class CdnController {
   private async triggerProcessing(userId: string, classId: string) {
       const processingUrl = `${process.env.PROCESSING_URL!}/processing/start-workflow`;
       this.logger.log(`Triggering processing for Class ID: ${classId}`);
-
       try {
         await firstValueFrom(
-            // --- CHANGE: Payload now sends classId instead of className
             this.httpService.post(processingUrl, { userId, classId }, {
                 timeout: 300000 
             })

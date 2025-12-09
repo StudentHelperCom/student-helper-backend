@@ -7,6 +7,7 @@ import { pdf } from 'pdf-to-img';
 import { InjectRepository } from '@nestjs/typeorm'; 
 import { Repository } from 'typeorm';                
 import { ClassEntity } from './entities/class.entity';
+import { CreateClassDto } from './entities/create-class.dto';
 
 @Injectable()
 export class CdnService {
@@ -38,20 +39,51 @@ export class CdnService {
     }
   }
 
+  async createClass(data: CreateClassDto) {
+      this.logger.log(`Service creating class for User: ${data.userId}, Name: ${data.className}`);
+      
+      try {
+        let classEntity = await this.classesRepository.findOne({ 
+            where: { userId: data.userId, name: data.className } 
+        });
+
+        if (!classEntity) {
+            this.logger.log('Class not found. Creating new...');
+            classEntity = this.classesRepository.create({
+                userId: data.userId,
+                name: data.className,
+                examDate: data.examDate ? new Date(data.examDate) : undefined,
+                examLocation: data.examLocation
+            });
+        } else {
+            this.logger.log(`Class found (ID: ${classEntity.id}). Updating metadata...`);
+            this.logger.log(`New Date: ${data.examDate}, New Loc: ${data.examLocation}`);
+            
+            if (data.examDate) classEntity.examDate = new Date(data.examDate);
+            if (data.examLocation) classEntity.examLocation = data.examLocation;
+        }
+
+        const saved = await this.classesRepository.save(classEntity);
+        this.logger.log(`Class saved successfully. ID: ${saved.id}`);
+        return saved;
+
+      } catch (error) {
+        this.logger.error(`Error creating class: ${error.message}`);
+        throw new BadRequestException('Failed to create or update class');
+      }
+  }
+
   async saveFile(data: { 
     filename: string; 
     content: Buffer; 
     userId: string; 
     className: string;
-    examDate: string;       
-    examLocation: string; 
   }) {
     const sanitizedFilename = this.sanitizeFilename(data.filename);
     const tempFilePath = path.join(this.tempDir, `temp_${Date.now()}_${sanitizedFilename}`);
 
     try {
       // 1. === DATABASE LOGIC ===
-      // Find or Create Class to get the UUID
       let classEntity = await this.classesRepository.findOne({ 
         where: { userId: data.userId, name: data.className } 
       });
@@ -59,31 +91,24 @@ export class CdnService {
       if (!classEntity) {
         classEntity = this.classesRepository.create({
           userId: data.userId,
-          name: data.className,
-          examDate: data.examDate ? new Date(data.examDate) : undefined,
-          examLocation: data.examLocation
+          name: data.className
         });
-      } else {
-        if (data.examDate) classEntity.examDate = new Date(data.examDate);
-        if (data.examLocation) classEntity.examLocation = data.examLocation;
+        await this.classesRepository.save(classEntity);
       }
       
-      await this.classesRepository.save(classEntity);
-      const classId = classEntity.id; // <--- WE NEED THIS UUID
+      const classId = classEntity.id; 
 
       // 2. === FILE PROCESSING LOGIC ===
       await fs.writeFile(tempFilePath, data.content);
 
-      // --- NEW PATH: {classUUID}/uploads/{filename} ---
       const s3OriginalKey = `${classId}/uploads/${sanitizedFilename}`;
-      
       await this.uploadToS3(s3OriginalKey, data.content);
 
       const ext = path.extname(sanitizedFilename).toLowerCase();
       
       let result: any = { 
         filename: sanitizedFilename,
-        classId: classId, // Return ID for the controller
+        classId: classId,
         s3OriginalUrl: this.getPublicUrl(s3OriginalKey)
       };
 
@@ -97,9 +122,7 @@ export class CdnService {
 
       if (tempTextPath) {
         const textContent = await fs.readFile(tempTextPath, 'utf8');
-        // --- NEW PATH: {classUUID}/processed/{filename}.txt ---
         const s3TextKey = `${classId}/processed/${path.basename(sanitizedFilename, ext)}.txt`;
-        
         await this.uploadToS3(s3TextKey, Buffer.from(textContent, 'utf8'));
         result.s3TextUrl = this.getPublicUrl(s3TextKey);
         await fs.unlink(tempTextPath).catch(() => {});
@@ -114,8 +137,7 @@ export class CdnService {
       await fs.unlink(tempFilePath).catch(() => {});
     }
   }
-
-  // ... (Keep existing processPdfTextOnly, processImage, sanitizeFilename, uploadToS3, getPublicUrl) ...
+  
   private async processPdfTextOnly(pdfPath: string, originalFilename: string): Promise<string> {
     const txtPath = path.join(this.tempDir, `${path.basename(originalFilename)}.txt`);
     try {
@@ -129,7 +151,6 @@ export class CdnService {
         this.logger.warn(`Standard extraction failed: ${e.message}`);
       }
       if (!text || text.length < 50) {
-        this.logger.warn(`PDF ${originalFilename} appears scanned. Starting OCR...`);
         const worker = await createWorker('eng+pol');
         text = '';
         const document = await pdf(pdfPath, { scale: 2.0 }); 
@@ -143,7 +164,6 @@ export class CdnService {
       await fs.writeFile(txtPath, text, 'utf8');
       return txtPath;
     } catch (err) {
-      this.logger.error(`PDF Parse failed for ${originalFilename}`, err);
       throw err;
     }
   }
@@ -156,9 +176,6 @@ export class CdnService {
       const { data: { text } } = await worker.recognize(imagePath);
       await fs.writeFile(txtPath, text, 'utf8');
       return txtPath;
-    } catch (error) {
-      this.logger.error(`Image OCR failed`, error);
-      throw error;
     } finally {
       await worker.terminate();
     }

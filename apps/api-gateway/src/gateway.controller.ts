@@ -17,6 +17,9 @@ import { ApiBody, ApiConsumes, ApiOperation, ApiTags, ApiBearerAuth } from '@nes
 import { AuthDto } from './auth.dto';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
 
+// =========================================================================
+// === HEALTHCHECK ===
+// =========================================================================
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
@@ -27,6 +30,9 @@ export class HealthController {
   }
 }
 
+// =========================================================================
+// === CDN CONTROLLER ===
+// =========================================================================
 @ApiTags('CDN')
 @ApiBearerAuth()
 @Controller('cdn')
@@ -37,14 +43,45 @@ export class CdnController {
 
   @Get('health')
   @ApiOperation({ summary: 'Health check' })
-  healthCheck() {
-    return 'OK';
+  healthCheck() { return 'OK'; }
+
+  @Post('create-class')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Create a Class entry in DB' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['className'],
+      properties: {
+        className: { type: 'string', example: 'Mathematics 101' },
+        examDate: { type: 'string', format: 'date-time', example: '2025-06-15T09:00:00' },
+        examLocation: { type: 'string', example: 'Room 304' }
+      }
+    }
+  })
+  async createClass(@Body() body: { className: string; examDate?: string; examLocation?: string }, @Req() req) {
+      const user = req.user;
+      const cdnUrl = `${process.env.CDN_URL!}/cdn/create-class`;
+
+      const payload = {
+          userId: user.userId,
+          className: body.className,
+          examDate: body.examDate,
+          examLocation: body.examLocation
+      };
+
+      try {
+        const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
+        return response.data;
+      } catch (error) {
+        throw new BadRequestException(error.response?.data?.message || 'Failed to create class');
+      }
   }
 
   @Post('upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files', 10))
-  @ApiOperation({ summary: 'Upload files to Class (returns classId)' })
+  @ApiOperation({ summary: 'Upload files to Class' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -52,8 +89,6 @@ export class CdnController {
       required: ['className', 'files'], 
       properties: {
         className: { type: 'string', description: 'The name of the class' },
-        examDate: { type: 'string', format: 'date-time', example: '2025-06-15T09:00:00' },
-        examLocation: { type: 'string', example: 'Room 304' },
         files: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
@@ -63,7 +98,7 @@ export class CdnController {
   })
   async uploadFiles(
     @UploadedFiles() files: Express.Multer.File[], 
-    @Body() body: { className: string; examDate?: string; examLocation?: string }, 
+    @Body() body: { className: string }, 
     @Req() req
   ) {
     const user = req.user;
@@ -76,15 +111,11 @@ export class CdnController {
       content: file.buffer.toString('base64'),
       userId: user.userId,
       className: body.className,
-      examDate: body.examDate, 
-      examLocation: body.examLocation
     }));
 
     const cdnUrl = `${process.env.CDN_URL!}/cdn/upload`;
 
     try {
-      // The response from CDN Service will now contain { classId: "..." }
-      // The Frontend should save this ID!
       const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
       return response.data;
     } catch (error) {
@@ -95,9 +126,8 @@ export class CdnController {
 }
 
 // =========================================================================
-// === UPDATED PROCESSING CONTROLLER ===
+// === PROCESSING CONTROLLER ===
 // =========================================================================
-
 @ApiTags('Processing')
 @ApiBearerAuth()
 @Controller('processing')
@@ -112,11 +142,11 @@ export class ProcessingController {
 
   @Post('run')
   @UseGuards(JwtAuthGuard) 
-  @ApiOperation({ summary: 'Manually trigger processing for a Class ID' })
+  @ApiOperation({ summary: 'Manually trigger processing for the chosen class' })
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['classId'], // Changed from className
+      required: ['classId'], 
       properties: {
         classId: { type: 'string', example: 'uuid-1234-5678', description: 'The UUID of the class returned by upload' }
       },
@@ -127,7 +157,6 @@ export class ProcessingController {
 
     const processingUrl = `${process.env.PROCESSING_URL!}/processing/run`;
     
-    // UPDATED PAYLOAD: Only sending classId
     const payload = { classId: body.classId };
 
     try {
@@ -207,6 +236,9 @@ export class ProcessingController {
   }
 }
 
+// =========================================================================
+// === AUTH CONTROLLER ===
+// =========================================================================
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
