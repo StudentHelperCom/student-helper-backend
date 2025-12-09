@@ -3,6 +3,9 @@ import { ProcessingHelpers } from './helpers/processing.helpers';
 import * as path from 'path';
 import { ProcessingAi } from './helpers/processing.ai';
 
+// Batch size 3 is efficient for multitasking without hitting limits instantly
+const BATCH_SIZE = 3;
+
 @Injectable()
 export class ProcessingService {
   private readonly logger = new Logger(ProcessingService.name);
@@ -15,32 +18,26 @@ export class ProcessingService {
   async executeFullWorkflow(classId: string) {
     this.logger.log(`=== STARTING FULL WORKFLOW FOR CLASS ID: ${classId} ===`);
 
-    // Step 1: Run AI Processing (Batch)
-    // Reads from 'uploads/' -> Writes to 'final/'
+    // Step 1: Run AI Processing (Multitasking)
     const processResult = await this.process(classId);
     if (processResult.status === 'empty' || processResult.status === 'error') {
        return { step: 'process', error: processResult.message };
     }
 
     // Step 2: Merge the processed files
-    // Reads from 'final/' -> Writes 'Final_Merged.pdf' to root
     const mergeResult = await this.mergeFinalPdfsS3(classId);
     if (mergeResult.status === 'error') {
        return { step: 'merge', error: mergeResult.message };
     }
 
     // Step 3: Split the merged file into final topics
-    // Reads 'Final_Merged.txt' -> Writes 't1.pdf', 't2.pdf' to root
     const splitResult = await this.splitMergedPdf(classId);
 
     // === STEP 4: CLEANUP ===
-    // Now that we have the final result, we delete the source files
     this.logger.log(`Work complete. Deleting source folders for ${classId}...`);
-    
     try {
         await this.helpers.deleteFolderContents(`${classId}/uploads/`);
         await this.helpers.deleteFolderContents(`${classId}/processed/`);
-        // Note: mergeFinalPdfsS3 already cleaned up 'final/'
         this.logger.log('Cleanup successful.');
     } catch (error) {
         this.logger.warn(`Cleanup failed (non-critical): ${error.message}`);
@@ -57,7 +54,7 @@ export class ProcessingService {
   }
 
   // -------------------------------------------------------------------------
-  // 1. Process the uploaded file
+  // 1. Process the uploaded file (Multitasking Implemented)
   // -------------------------------------------------------------------------
   async process(classId: string) {
     const uploadsPrefix = `${classId}/uploads/`;
@@ -68,43 +65,64 @@ export class ProcessingService {
          return { status: 'empty', message: `No PDF files found in ${uploadsPrefix}` };
     }
 
+    this.logger.log(`Found ${s3PdfFiles.length} files. Processing in batches of ${BATCH_SIZE}...`);
     const results: any[] = [];
 
-    for (const pdfKey of s3PdfFiles) {
-       const baseName = path.basename(pdfKey, '.pdf');
-       const txtKey = `${classId}/processed/${baseName}.txt`; 
+    // Loop through files in chunks (Batches)
+    for (let i = 0; i < s3PdfFiles.length; i += BATCH_SIZE) {
+        const batch = s3PdfFiles.slice(i, i + BATCH_SIZE);
+        
+        // Process current batch in parallel
+        const batchResults = await Promise.all(
+            batch.map(pdfKey => this.processSingleFile(classId, pdfKey))
+        );
+        
+        results.push(...batchResults);
 
-       this.logger.log(`Processing file: ${baseName}`);
-
-       try {
-         const txtBuffer = await this.helpers.getFileWithRetry(txtKey); 
-         const pdfBuffer = await this.helpers.getFileWithRetry(pdfKey);
-
-         const aiOutput = await this.aiService.askGeminiWithRetry(txtBuffer, pdfBuffer);
-
-         const finalId = Math.random().toString(36).substring(2, 10);
-         const finalPdf = await this.helpers.buildPdf(aiOutput, finalId);
-         const finalTxt = Buffer.from(aiOutput, 'utf-8');
-
-         const finalPdfKey = `${classId}/final/${finalId}.pdf`;
-         const finalTxtKey = `${classId}/final/${finalId}.txt`;
-
-         await this.helpers.uploadFile(finalPdfKey, finalPdf, 'application/pdf');
-         await this.helpers.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8');
-
-         results.push({ status: 'success', baseName });
-
-         this.logger.log('Cooling down network for 2 seconds...');
-         await this.helpers.sleep(2000); 
-
-       } catch (error) {
-         this.logger.error(`Failed to process ${baseName}: ${error.message}`);
-         results.push({ status: 'error', baseName, error: error.message });
-         await this.helpers.sleep(2000);
-       }
+        // Safety delay between batches to respect rate limits
+        if (i + BATCH_SIZE < s3PdfFiles.length) {
+            this.logger.log('Waiting 5 seconds between batches...');
+            await this.helpers.sleep(5000);
+        }
     }
 
     return { status: 'batch_complete', details: results };
+  }
+
+  // Helper for processing a single file
+  private async processSingleFile(classId: string, pdfKey: string) {
+    const baseName = path.basename(pdfKey, '.pdf');
+    const txtKey = `${classId}/processed/${baseName}.txt`; 
+
+    this.logger.log(`>> Processing: ${baseName}`);
+
+    try {
+      const [txtBuffer, pdfBuffer] = await Promise.all([
+         this.helpers.getFileWithRetry(txtKey),
+         this.helpers.getFileWithRetry(pdfKey)
+      ]);
+
+      const aiOutput = await this.aiService.askGeminiWithRetry(txtBuffer, pdfBuffer);
+
+      const finalId = Math.random().toString(36).substring(2, 10);
+      const finalPdf = await this.helpers.buildPdf(aiOutput, finalId);
+      const finalTxt = Buffer.from(aiOutput, 'utf-8');
+
+      const finalPdfKey = `${classId}/final/${finalId}.pdf`;
+      const finalTxtKey = `${classId}/final/${finalId}.txt`;
+
+      await Promise.all([
+          this.helpers.uploadFile(finalPdfKey, finalPdf, 'application/pdf'),
+          this.helpers.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8')
+      ]);
+
+      this.logger.log(`<< Success: ${baseName}`);
+      return { status: 'success', baseName };
+
+    } catch (error) {
+      this.logger.error(`!! Failed: ${baseName}: ${error.message}`);
+      return { status: 'error', baseName, error: error.message };
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -126,15 +144,19 @@ export class ProcessingService {
 
     let allTextContent = '';
     
-    for (const pdfKey of s3PdfFiles) {
-      try {
-        const txtKey = pdfKey.replace('.pdf', '.txt');
-        const txtBuffer = await this.helpers.getFile(txtKey);
-        allTextContent += `\n\n=== CONTENT FROM ${path.basename(pdfKey)} ===\n${txtBuffer.toString()}`;
-      } catch (error) {
-        this.logger.error(`Error getting text content from ${pdfKey}:`, error);
-      }
-    }
+    // Parallel download of text content for speed
+    const textContents = await Promise.all(s3PdfFiles.map(async (pdfKey) => {
+        try {
+            const txtKey = pdfKey.replace('.pdf', '.txt');
+            const txtBuffer = await this.helpers.getFile(txtKey);
+            return `\n\n=== CONTENT FROM ${path.basename(pdfKey)} ===\n${txtBuffer.toString()}`;
+        } catch (error) {
+            this.logger.error(`Error getting text content from ${pdfKey}:`, error);
+            return '';
+        }
+    }));
+
+    allTextContent = textContents.join('');
 
     if (!allTextContent.trim()) {
       return { status: 'error', message: 'No text content found to merge.' };
@@ -154,8 +176,10 @@ export class ProcessingService {
     await this.helpers.deleteFolderContents(finalSubfolderPrefix); 
 
     this.logger.log(`Uploading final merged files...`);
-    await this.helpers.uploadFile(finalPdfKey, finalPdfBuffer, 'application/pdf');
-    await this.helpers.uploadFile(finalTxtKey, finalTxtBuffer, 'text/plain; charset=utf-8');
+    await Promise.all([
+        this.helpers.uploadFile(finalPdfKey, finalPdfBuffer, 'application/pdf'),
+        this.helpers.uploadFile(finalTxtKey, finalTxtBuffer, 'text/plain; charset=utf-8')
+    ]);
 
     return {
       status: 'ok',
@@ -224,15 +248,17 @@ export class ProcessingService {
     }
 
     const generatedFiles: string[] = [];
-
-    for (const topic of topics) {
+    
+    // Parallel upload of split files
+    const uploadPromises = topics.map(async (topic) => {
         const pdfBuffer = await this.helpers.buildPdf(topic.content, 'temp');
         const fileName = `t${topic.number}.pdf`;
         const finalKey = `${rootFolderPrefix}${fileName}`;
-
         await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
         generatedFiles.push(finalKey);
-    }
+    });
+
+    await Promise.all(uploadPromises);
 
     this.logger.log('Deleting merged TXT file (keeping PDF)...');
     await this.helpers.deleteFile(mergedTxtKey);
@@ -244,3 +270,8 @@ export class ProcessingService {
     };
   }
 }
+
+
+
+
+

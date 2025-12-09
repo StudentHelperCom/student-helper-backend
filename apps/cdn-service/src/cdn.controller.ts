@@ -69,7 +69,7 @@ export class CdnController {
       try {
         await firstValueFrom(
             this.httpService.post(processingUrl, { userId, classId }, {
-                timeout: 300000 
+                timeout: 600000 
             })
         );
         this.logger.log('Processing workflow completed successfully.');

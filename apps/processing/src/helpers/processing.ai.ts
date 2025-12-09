@@ -20,21 +20,35 @@ export class ProcessingAi {
   /**
    * Main entry point for processing individual files with Retry Logic
    */
-  public async askGeminiWithRetry(txt: Buffer, pdf: Buffer, attempts = 3): Promise<string> {
+  public async askGeminiWithRetry(txt: Buffer, pdf: Buffer, attempts = 5): Promise<string> {
     for (let i = 0; i < attempts; i++) {
         try {
             return await this.askGemini(txt, pdf);
         } catch (error) {
-            // Check for specific network errors (ECONNRESET, ETIMEDOUT, 503)
+            const status = error.response?.status;
+            const message = error.message || '';
+
+            // === CRITICAL FIX FOR MULTITASKING & CUTOFFS ===
+            const isRateLimit = status === 429 || message.includes('Quota exceeded');
+            
             const isNetworkError = 
-                error.message.includes('ECONNRESET') || 
-                error.message.includes('ETIMEDOUT') ||
-                error.response?.status === 503;
+                message.includes('ECONNRESET') || 
+                message.includes('ETIMEDOUT') ||
+                status === 503;
+
+            if (isRateLimit) {
+                // Wait longer for quota issues (20s, 25s, 30s...)
+                const waitTime = 20000 + (i * 5000); 
+                this.logger.warn(`Gemini Quota Exceeded (Attempt ${i+1}/${attempts}). Cooling down for ${waitTime/1000}s...`);
+                await this.sleep(waitTime);
+                continue;
+            }
 
             if (isNetworkError) {
-                this.logger.warn(`Gemini Network Error (Attempt ${i+1}/${attempts}): ${error.message}`);
                 // Exponential backoff: 2s, 4s, 6s...
-                await this.sleep(2000 * (i + 1)); 
+                const waitTime = 2000 * (i + 1);
+                this.logger.warn(`Gemini Network Error (Attempt ${i+1}/${attempts}): ${message}`);
+                await this.sleep(waitTime); 
                 continue;
             }
             // If it's a logic error (e.g. 400 Bad Request), fail immediately
@@ -48,8 +62,6 @@ export class ProcessingAi {
    * Main entry point for merging content
    */
   public async askGeminiToMerge(allContent: string): Promise<string> {
-    // We can add retry logic here too if needed, but for now keeping it direct
-    // based on previous structure, but wrapped in try/catch for better error messages.
     try {
       const requestBody = {
         contents: [
@@ -95,7 +107,7 @@ RULES:
         ],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 16000,
+          maxOutputTokens: 16384, // Increased to prevent cutoffs
         }
       };
 
@@ -103,7 +115,7 @@ RULES:
       
       const res = await axios.post(urlWithKey, requestBody, {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 300000, // 5 minutes for merge
+        timeout: 600000, // Increased to 10 minutes to prevent cutoffs
       });
 
       return this.extractTextFromResponse(res);
@@ -162,7 +174,7 @@ RULES:
   - Don't skip any important information, dont add something new, just group everything where it needs
   - Keep the original meaning but organize it logically
   - If there is no images dont write "There are no images or diagrams present in the provided PDF content to describe."
-  - There is no need to include ** near the topics`
+  - There is no need to include ** near the topics and other words. Dont use bold text or something instead of standart text.Please answer in plain paragraphs, do not use bullet points or numbered lists`
               },
               {
                 inlineData: {
@@ -175,7 +187,7 @@ RULES:
         ],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 8192,
+          maxOutputTokens: 16384, // Increased from 8192 to 16384 to fix truncated text
         }
       };
 
@@ -183,7 +195,7 @@ RULES:
       
       const res = await axios.post(urlWithKey, requestBody, {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 180000, // 3 minutes
+        timeout: 600000, // Increased from 3m to 10m to prevent network cutoffs
       });
 
       return this.extractTextFromResponse(res);

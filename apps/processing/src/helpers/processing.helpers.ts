@@ -35,7 +35,7 @@ export class ProcessingHelpers {
     },
     requestHandler: {
         connectionTimeout: 5000,
-        socketTimeout: 5000,
+        socket: 5000,
     } as any
   });
 

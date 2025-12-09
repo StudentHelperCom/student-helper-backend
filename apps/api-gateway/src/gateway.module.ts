@@ -13,7 +13,7 @@ import { CdnController, AuthController, ProcessingController, HealthController }
     }),
     HttpModule.registerAsync({
       useFactory: () => ({
-        timeout: 30000,
+        timeout: 600000,
         maxRedirects: 5,
       }),
     }),

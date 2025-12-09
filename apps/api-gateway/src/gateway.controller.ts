@@ -163,7 +163,7 @@ export class ProcessingController {
       this.logger.log(`Requesting batch processing for Class ID [${body.classId}]`);
       const response = await firstValueFrom(
         this.httpService.post(processingUrl, payload, {
-          timeout: 180000,
+          timeout: 600000,
           headers: { 'Content-Type': 'application/json' }
         })
       );
@@ -194,7 +194,7 @@ export class ProcessingController {
     try {
       const response = await firstValueFrom(
         this.httpService.post(processingUrl, payload, {
-          timeout: 120000,
+          timeout: 600000,
           headers: { 'Content-Type': 'application/json' }
         })
       );
@@ -225,7 +225,7 @@ export class ProcessingController {
     try {
       const response = await firstValueFrom(
         this.httpService.post(processingUrl, payload, {
-          timeout: 120000,
+          timeout: 600000,
           headers: { 'Content-Type': 'application/json' }
         })
       );
@@ -264,7 +264,7 @@ export class AuthController {
     try {
       const response = await firstValueFrom(
         this.httpService.post(userServiceUrl, payload, {
-          timeout: 5000,
+          timeout: 600000,
           headers: {
             'Content-Type': 'application/json',
           }
@@ -296,7 +296,7 @@ export class AuthController {
     try {
       const response = await firstValueFrom(
         this.httpService.post(userServiceUrl, payload, {
-          timeout: 5000,
+          timeout: 600000,
           headers: {
             'Content-Type': 'application/json',
           }
