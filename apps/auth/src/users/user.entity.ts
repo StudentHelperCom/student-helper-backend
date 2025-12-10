@@ -9,7 +9,7 @@ export class UserEntity extends BaseEntity {
   login!: string; 
 
   @Column({ type: 'varchar', length: 100, nullable: false })
-  password!: string; // Hashed password
+  password!: string; 
 
   @Column({ type: 'timestamp', nullable: true })
   lastActivityDate?: Date | null

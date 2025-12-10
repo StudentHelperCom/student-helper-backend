@@ -2,8 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ProcessingHelpers } from './helpers/processing.helpers';
 import * as path from 'path';
 import { ProcessingAi } from './helpers/processing.ai';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Topic } from './entities/topic.entity';
 
-// Batch size 3 is efficient for multitasking without hitting limits instantly
 const BATCH_SIZE = 3;
 
 @Injectable()
@@ -12,28 +14,30 @@ export class ProcessingService {
 
   constructor(
     private readonly helpers: ProcessingHelpers,
-    private readonly aiService: ProcessingAi
+    private readonly aiService: ProcessingAi,
+    @InjectRepository(Topic) 
+    private topicsRepository: Repository<Topic>,
   ) {}
 
   async executeFullWorkflow(classId: string) {
     this.logger.log(`=== STARTING FULL WORKFLOW FOR CLASS ID: ${classId} ===`);
 
-    // Step 1: Run AI Processing (Multitasking)
+    // Run AI Processing
     const processResult = await this.process(classId);
     if (processResult.status === 'empty' || processResult.status === 'error') {
        return { step: 'process', error: processResult.message };
     }
 
-    // Step 2: Merge the processed files
+    // Merge the processed files
     const mergeResult = await this.mergeFinalPdfsS3(classId);
     if (mergeResult.status === 'error') {
        return { step: 'merge', error: mergeResult.message };
     }
 
-    // Step 3: Split the merged file into final topics
+    // Split the merged file into final topics
     const splitResult = await this.splitMergedPdf(classId);
 
-    // === STEP 4: CLEANUP ===
+    // Cleanup 
     this.logger.log(`Work complete. Deleting source folders for ${classId}...`);
     try {
         await this.helpers.deleteFolderContents(`${classId}/uploads/`);
@@ -53,9 +57,9 @@ export class ProcessingService {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // 1. Process the uploaded file (Multitasking Implemented)
-  // -------------------------------------------------------------------------
+  // =========================================================================
+  // === FILE PROCESSING ===
+  // =========================================================================
   async process(classId: string) {
     const uploadsPrefix = `${classId}/uploads/`;
 
@@ -79,7 +83,6 @@ export class ProcessingService {
         
         results.push(...batchResults);
 
-        // Safety delay between batches to respect rate limits
         if (i + BATCH_SIZE < s3PdfFiles.length) {
             this.logger.log('Waiting 5 seconds between batches...');
             await this.helpers.sleep(5000);
@@ -89,7 +92,6 @@ export class ProcessingService {
     return { status: 'batch_complete', details: results };
   }
 
-  // Helper for processing a single file
   private async processSingleFile(classId: string, pdfKey: string) {
     const baseName = path.basename(pdfKey, '.pdf');
     const txtKey = `${classId}/processed/${baseName}.txt`; 
@@ -125,9 +127,9 @@ export class ProcessingService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 2. Merge All Final PDFs 
-  // -------------------------------------------------------------------------
+  // =========================================================================
+  // === FILE MERGING ===
+  // =========================================================================
   async mergeFinalPdfsS3(classId: string) {
     const rootFolderPrefix = `${classId}/`;
     const finalSubfolderPrefix = `${rootFolderPrefix}final/`;
@@ -171,7 +173,7 @@ export class ProcessingService {
     const finalPdfKey = `${rootFolderPrefix}Final_Merged_${classId}.pdf`;
     const finalTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
-    // 1. Delete the "final/" subfolder (Individual AI summaries)
+    // 1. Delete the "final/" subfolder
     this.logger.log(`Cleaning up intermediate AI files...`);
     await this.helpers.deleteFolderContents(finalSubfolderPrefix); 
 
@@ -189,9 +191,9 @@ export class ProcessingService {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // 3. Split Merged TXT into Topic PDFs 
-  // -------------------------------------------------------------------------
+  // =========================================================================
+  // === SPLIT MERGE FILES ===
+  // =========================================================================
   async splitMergedPdf(classId: string) {
     const rootFolderPrefix = `${classId}/`;
     const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
@@ -208,64 +210,97 @@ export class ProcessingService {
     }
 
     const lines = fullText.split('\n');
-    const topics: { number: string; content: string }[] = [];
+    // Change topics structure to include the name
+    const topics: { 
+        number: string; 
+        content: string; 
+        name: string;
+    }[] = [];
     
     let currentTopicNumber = 0; 
     let currentTopicString = ''; 
+    let currentTopicName = '';
     let currentContent: string[] = [];
     const literatureKeywords = ['bibliografia', 'literatura', 'źródła', 'wykaz', 'references', 'bibliography'];
     let isInsideLiterature = false;
 
     for (const line of lines) {
       const trimmed = line.trim();
-      const match = trimmed.match(/^(\d+)\.\s+(.*)/);
+      const match = trimmed.match(/^(\d+)\.\s+(.*)/); 
 
       if (match) {
         const foundNumber = parseInt(match[1], 10);
-        const topicTitle = match[2].toLowerCase();
+        const topicTitle = match[2]; 
         const isSequenceReset = foundNumber < currentTopicNumber;
         const isNextTopic = foundNumber === currentTopicNumber + 1;
 
         if (isSequenceReset || (isInsideLiterature && !isNextTopic)) {
-             currentContent.push(line.replace('.', ')'));
-             continue; 
+            currentContent.push(line.replace('.', ')'));
+            continue; 
         }
 
-        if (currentTopicString) topics.push({ number: currentTopicString, content: currentContent.join('\n') });
+        if (currentTopicString) topics.push({ 
+            number: currentTopicString, 
+            content: currentContent.join('\n'), 
+            name: currentTopicName
+        });
 
         currentTopicNumber = foundNumber;
         currentTopicString = match[1];
+        currentTopicName = topicTitle;
         currentContent = [trimmed]; 
-        isInsideLiterature = literatureKeywords.some(keyword => topicTitle.includes(keyword));
+        isInsideLiterature = literatureKeywords.some(keyword => topicTitle.toLowerCase().includes(keyword));
 
       } else {
         if (currentTopicString) currentContent.push(line);
       }
     }
 
+    // Push the very last topic
     if (currentTopicString && currentContent.length > 0) {
-        topics.push({ number: currentTopicString, content: currentContent.join('\n') });
+        topics.push({ 
+            number: currentTopicString, 
+            content: currentContent.join('\n'),
+            name: currentTopicName
+        });
     }
 
     const generatedFiles: string[] = [];
-    
+    const topicEntities: Topic[] = [];
+
     // Parallel upload of split files
     const uploadPromises = topics.map(async (topic) => {
-        const pdfBuffer = await this.helpers.buildPdf(topic.content, 'temp');
-        const fileName = `t${topic.number}.pdf`;
+        const topicRandomId = Math.random().toString(36).substring(2, 10);
+
+        const pdfBuffer = await this.helpers.buildPdf(topic.content, topicRandomId);
+        
+        const fileName = `${topicRandomId}.pdf`; 
         const finalKey = `${rootFolderPrefix}${fileName}`;
+        
         await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
         generatedFiles.push(finalKey);
+        
+        const newTopic = this.topicsRepository.create({
+            topicRandomId: topicRandomId, 
+            classId: classId,
+            topicName: topic.name, 
+        });
+        topicEntities.push(newTopic);
     });
 
     await Promise.all(uploadPromises);
+    
+    if (topicEntities.length > 0) {
+        await this.topicsRepository.save(topicEntities);
+        this.logger.log(`Successfully saved ${topicEntities.length} new topics to the database.`);
+    }
 
     this.logger.log('Deleting merged TXT file (keeping PDF)...');
     await this.helpers.deleteFile(mergedTxtKey);
 
     return {
         status: 'ok',
-        message: `Split into ${generatedFiles.length} files. Merged TXT deleted.`,
+        message: `Split into ${generatedFiles.length} files and saved to DB. Merged TXT deleted.`,
         files: generatedFiles
     };
   }

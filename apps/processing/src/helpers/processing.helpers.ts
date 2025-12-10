@@ -7,7 +7,6 @@ import {
   ListObjectsV2CommandOutput, 
   DeleteObjectsCommand 
 } from '@aws-sdk/client-s3';
-import axios from 'axios';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { Readable } from 'stream';
 import fontkit from '@pdf-lib/fontkit';
@@ -23,8 +22,6 @@ export class ProcessingHelpers {
 
   // Environment Config
   private bucket = process.env.AWS_S3_BUCKET!;
-  private geminiApiKey = process.env.GEMINI_API_KEY!;
-  private geminiUrl = process.env.GEMINI_URL!;
 
   // S3 Client Initialization
   private s3 = new S3Client({
