@@ -237,6 +237,74 @@ export class ProcessingController {
 }
 
 // =========================================================================
+// === QUIZ CONTROLLER (NEW) ===
+// =========================================================================
+@ApiTags('Quiz')
+@ApiBearerAuth()
+@Controller('quiz')
+export class QuizController {
+  private readonly logger = new Logger(QuizController.name);
+
+  constructor(private readonly httpService: HttpService) {}
+
+  @Get('health')
+  @ApiOperation({ summary: 'Health check' })
+  healthCheck() { return 'OK'; }
+
+  @Post('generate')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Generate quiz questions based on selected topics' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['mode', 'topicIds'],
+      properties: {
+        mode: { 
+          type: 'string', 
+          enum: ['Quiz', 'Test', 'Cards'], 
+          example: 'Quiz',
+          description: 'Study mode'
+        },
+        topicIds: { 
+          type: 'array', 
+          items: { type: 'string' },
+          example: ['uuid-topic-1', 'uuid-topic-2'],
+          description: 'Array of Topic UUIDs from the database'
+        }
+      }
+    }
+  })
+  async generateQuiz(@Body() body: { mode: string; topicIds: string[] }, @Req() req) {
+    if (!body.topicIds || body.topicIds.length === 0) {
+      throw new BadRequestException('At least one topicId is required');
+    }
+
+    const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/generate`;
+
+    const payload = {
+      mode: body.mode,
+      topicIds: body.topicIds
+    };
+
+    try {
+      this.logger.log(`Requesting quiz generation [Mode: ${body.mode}] for ${body.topicIds.length} topics`);
+      
+      const response = await firstValueFrom(
+        this.httpService.post(quizServiceUrl, payload, {
+          timeout: 60000, // 60s timeout for AI generation
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+      return response.data;
+
+    } catch (error) {
+      this.logger.error(`Quiz generation failed: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Failed to generate quiz');
+    }
+  }
+}
+
+// =========================================================================
 // === AUTH CONTROLLER ===
 // =========================================================================
 @ApiTags('Auth')
@@ -309,5 +377,3 @@ export class AuthController {
       }
   }
 }
-
-

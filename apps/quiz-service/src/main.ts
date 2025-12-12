@@ -19,7 +19,7 @@ async function bootstrap() {
   );
 
   await app.listen(port, '0.0.0.0');
-  console.log(`Processing Microservice running on port ${port}`);
+  console.log(`Quiz Microservice running on port ${port}`);
 }
 
 bootstrap();

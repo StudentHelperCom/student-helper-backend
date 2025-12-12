@@ -1,12 +1,21 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Post, Body, Get } from '@nestjs/common';
 import { QuizService } from './quiz.service';
+import { CreateQuizDto } from './dtos/create-quiz.dto';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 
-@Controller()
+@ApiTags('Quiz')
+@Controller('quiz')
 export class QuizController {
   constructor(private readonly quizService: QuizService) {}
 
-  @Get()
-  getHello(): string {
-    return this.quizService.getHello();
+  @Get('health')
+  healthCheck() {
+    return 'OK';
+  }
+
+  @Post('generate')
+  @ApiOperation({ summary: 'Generuj quiz na podstawie wybranych tematów' })
+  async generate(@Body() dto: CreateQuizDto) {
+    return this.quizService.generateQuiz(dto.mode, dto.topicIds);
   }
 }

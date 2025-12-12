@@ -5,6 +5,7 @@ import { ProcessingAi } from './helpers/processing.ai';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Topic } from './entities/topic.entity';
+import { randomUUID } from 'crypto';
 
 const BATCH_SIZE = 3;
 
@@ -270,20 +271,26 @@ export class ProcessingService {
 
     // Parallel upload of split files
     const uploadPromises = topics.map(async (topic) => {
-        const topicRandomId = Math.random().toString(36).substring(2, 10);
+        // 1. ZMIANA: Generujemy UUID dla bazy danych RĘCZNIE tutaj
+        const newTopicId = randomUUID(); 
 
-        const pdfBuffer = await this.helpers.buildPdf(topic.content, topicRandomId);
-        
-        const fileName = `${topicRandomId}.pdf`; 
+        // 2. Używamy tego UUID jako nazwy pliku S3 (zamiast random id)
+        const fileName = `${newTopicId}.pdf`; 
         const finalKey = `${rootFolderPrefix}${fileName}`;
+        
+        // 3. Generujemy PDF
+        // Przekazujemy ID tylko po to, żeby było w stopce PDF (opcjonalnie)
+        const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId);
         
         await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
         generatedFiles.push(finalKey);
         
+        // 4. Tworzymy encję z ręcznie przypisanym ID
         const newTopic = this.topicsRepository.create({
-            topicRandomId: topicRandomId, 
+            id: newTopicId, // <--- Przypisujemy wygenerowane wyżej ID
             classId: classId,
-            topicName: topic.name, 
+            topicName: topic.name,
+            // topicRandomId - USUNIĘTE
         });
         topicEntities.push(newTopic);
     });
@@ -292,15 +299,15 @@ export class ProcessingService {
     
     if (topicEntities.length > 0) {
         await this.topicsRepository.save(topicEntities);
-        this.logger.log(`Successfully saved ${topicEntities.length} new topics to the database.`);
+        this.logger.log(`Successfully saved ${topicEntities.length} new topics.`);
     }
 
-    this.logger.log('Deleting merged TXT file (keeping PDF)...');
+    this.logger.log('Deleting merged TXT file...');
     await this.helpers.deleteFile(mergedTxtKey);
 
     return {
         status: 'ok',
-        message: `Split into ${generatedFiles.length} files and saved to DB. Merged TXT deleted.`,
+        message: `Split done. Topics saved using UUIDs as filenames.`,
         files: generatedFiles
     };
   }

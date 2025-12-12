@@ -1,0 +1,20 @@
+{
+    "sqltools.connections": [
+        {
+            "pgOptions": {
+                "ssl": {
+                    "rejectUnauthorized": true
+                }
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "dpg-d4mofqkhg0os73c0qto0-a.frankfurt-postgres.render.com",
+            "port": 5432,
+            "driver": "PostgreSQL",
+            "name": "student_helper_db_frxm",
+            "username": "student_helper_db_frxm_user",
+            "database": "student_helper_db_frxm",
+            "password": "DWQpUfGXQU8EsIxuPwAf3sJzB8mtNXn3"
+        }
+    ]
+}
