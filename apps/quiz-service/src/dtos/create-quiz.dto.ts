@@ -3,8 +3,8 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export enum StudyMode {
   QUIZ = 'Quiz',
-  TEST = 'Test',
   CARDS = 'Cards',
+  EXPANDED = 'Expanded',
   STUDY = 'Study'
 }
 

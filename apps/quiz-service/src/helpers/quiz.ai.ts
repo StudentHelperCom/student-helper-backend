@@ -8,38 +8,79 @@ export class QuizAi {
   private geminiApiKey = process.env.GEMINI_API_KEY!;
 
   async generateQuizQuestions(content: string): Promise<any> {
-    this.logger.log('Wysyłanie treści do Gemini w celu generowania quizu (nowa struktura)...');
+    this.logger.log('Sending content to Gemini for Quiz generation...');
 
     const prompt = `
-    Jesteś ekspertem edukacyjnym. Na podstawie poniższego tekstu stwórz quiz wielokrotnego wyboru.
+    You are an educational expert. Create a multiple-choice quiz based on the text below.
     
-    TREŚĆ MATERIAŁU:
+    CONTENT:
     ${content.substring(0, 30000)}
 
-    ZADANIE:
-    1. Stwórz 5-10 pytań sprawdzających zrozumienie tekstu.
-    2. Każde pytanie musi mieć unikalne numeryczne ID (1, 2, 3...).
-    3. Każde pytanie musi mieć tablicę odpowiedzi 'answers'.
-    4. Każda odpowiedź musi mieć pole 'text' i boolean 'is_correct'.
-    5. Tylko jedna odpowiedź w pytaniu może być true.
+    TASK:
+    1. Create 5-10 questions to test understanding of the text.
+    2. Each question must have a unique numeric ID.
+    3. Each question must have an 'answers' array.
+    4. Each answer must have 'text' and 'is_correct' boolean.
+    5. Only one answer per question can be true.
+    6. All the content must be in Polish.
 
-    WYMAGANY FORMAT JSON (Strict JSON, bez markdown):
+    REQUIRED JSON FORMAT (Strict JSON, no markdown):
     {
       "questions": [
         {
           "id": 1,
-          "question": "Tutaj treść pytania?",
+          "question": "Question text here?",
           "answers": [
-            { "text": "Błędna odpowiedź", "is_correct": false },
-            { "text": "Poprawna odpowiedź", "is_correct": true },
-            { "text": "Błędna odpowiedź", "is_correct": false },
-            { "text": "Błędna odpowiedź", "is_correct": false }
+            { "text": "Wrong answer", "is_correct": false },
+            { "text": "Correct answer", "is_correct": true },
+            { "text": "Wrong answer", "is_correct": false },
+            { "text": "Wrong answer", "is_correct": false }
           ]
         }
       ]
     }
     `;
 
+    return this.callGeminiModel(prompt);
+  }
+
+  async generateFlashcards(content: string): Promise<any> {
+    this.logger.log('Sending content to Gemini for Flashcards generation...');
+
+    const prompt = `
+    You are an educational expert. Create study flashcards based on the text below.
+    
+    CONTENT:
+    ${content.substring(0, 30000)}
+
+    TASK:
+    1. Create 10-15 flashcards extracting key terms, definitions, or concepts.
+    2. 'question' is the front of the card (term/concept).
+    3. 'answer' is the back of the card (definition/explanation).
+    4. Each card must have a unique numeric ID.
+    5. All the content must be in Polish.
+
+    REQUIRED JSON FORMAT (Strict JSON, no markdown):
+    {
+      "flashcards": [
+        {
+          "id": 1,
+          "question": "Key Term or Question",
+          "answer": "Definition or Answer"
+        },
+        {
+          "id": 2,
+          "question": "Another Term",
+          "answer": "Another Definition"
+        }
+      ]
+    }
+    `;
+
+    return this.callGeminiModel(prompt);
+  }
+
+  private async callGeminiModel(prompt: string): Promise<any> {
     try {
       const response = await axios.post(
         `${this.geminiUrl}?key=${this.geminiApiKey}`,
@@ -57,8 +98,8 @@ export class QuizAi {
       return this.cleanAndParseJson(rawText);
 
     } catch (error) {
-      this.logger.error(`Błąd Gemini: ${error.message}`);
-      throw new Error('Nie udało się wygenerować pytań.');
+      this.logger.error(`Gemini Error: ${error.message}`);
+      throw new Error('Failed to generate content from AI.');
     }
   }
 
@@ -67,13 +108,17 @@ export class QuizAi {
       const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleaned);
       
-      if (!parsed.questions && Array.isArray(parsed)) {
-          return { questions: parsed }; 
+      // Basic validation for Quiz
+      if (!parsed.questions && !parsed.flashcards && Array.isArray(parsed)) {
+          // Heuristic: if it looks like questions, wrap in questions
+          if (parsed.length > 0 && parsed[0].answers) return { questions: parsed };
+          // Heuristic: if it looks like flashcards, wrap in flashcards
+          if (parsed.length > 0 && parsed[0].answer && !parsed[0].answers) return { flashcards: parsed };
       }
       return parsed;
     } catch (e) {
-      this.logger.error('Błąd parsowania JSON od AI. Surowy tekst:', text);
-      return { questions: [] };
+      this.logger.error('JSON Parsing Error. Raw text:', text);
+      return {}; 
     }
   }
 }

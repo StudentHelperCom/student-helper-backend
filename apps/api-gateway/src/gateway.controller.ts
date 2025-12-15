@@ -261,7 +261,7 @@ export class QuizController {
       properties: {
         mode: { 
           type: 'string', 
-          enum: ['Quiz', 'Test', 'Cards'], 
+          enum: ['Quiz', 'Expanded', 'Cards', 'Study'], 
           example: 'Quiz',
           description: 'Study mode'
         },

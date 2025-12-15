@@ -47,15 +47,25 @@ export class QuizService {
         throw new BadRequestException('Failed to download files from S3 storage.');
     }
 
+    // === 1. QUIZ LOGIC ===
     if (mode === StudyMode.QUIZ) {
       const quizJson = await this.ai.generateQuizQuestions(combinedContent);
-      
       return {
         mode: 'quiz',
-        questions: quizJson
+        questions: quizJson.questions 
       };
     }
     
-    return null;
+    // === 2. FLASHCARDS LOGIC ===
+    if (mode === StudyMode.CARDS) {
+      const flashcardsJson = await this.ai.generateFlashcards(combinedContent);
+      return {
+        mode: 'cards',
+        flashcards: flashcardsJson.flashcards 
+      };
+    }
+    
+    // If mode doesn't match, throw error instead of returning null
+    throw new BadRequestException(`Mode ${mode} is not supported yet.`);
   }
 }
