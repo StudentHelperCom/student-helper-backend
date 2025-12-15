@@ -65,6 +65,12 @@ export class CdnService {
 
         const saved = await this.classesRepository.save(classEntity);
         this.logger.log(`Class saved successfully. ID: ${saved.id}`);
+
+        //S3
+        const folderKey = `${saved.id}/`;
+        await this.uploadToS3(folderKey, Buffer.from(''));
+        this.logger.log(`S3 Folder created: ${folderKey}`);
+
         return saved;
 
       } catch (error) {
