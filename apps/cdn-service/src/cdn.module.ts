@@ -5,6 +5,7 @@ import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm'
 import { ClassEntity } from './entities/class.entity';
+import { TopicEntity } from './entities/topics.entity';
 
 @Module({
   controllers: [CdnController],
@@ -14,7 +15,7 @@ import { ClassEntity } from './entities/class.entity';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    TypeOrmModule.forFeature([ClassEntity]),
+    TypeOrmModule.forFeature([ClassEntity, TopicEntity]),
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DB_HOST!,

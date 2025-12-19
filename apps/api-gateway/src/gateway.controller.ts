@@ -8,7 +8,9 @@ import {
   UseGuards,
   Req,      
   Logger,   
-  Get
+  Get,
+  Param,
+  ForbiddenException
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { HttpService } from '@nestjs/axios';
@@ -123,7 +125,44 @@ export class CdnController {
       throw new BadRequestException(error.response?.data?.message || 'Upload failed');
     }
   }
+
+  @Get('classes')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get list of all classes for the current user' })
+  async getClasses(@Req() req) {
+    const user = req.user;
+    const cdnUrl = `${process.env.CDN_URL!}/cdn/user/${user.userId}`;
+
+    try {
+      const response = await firstValueFrom(this.httpService.get(cdnUrl));
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Failed to fetch classes: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Failed to fetch classes');
+    }
+  }
+  
+  @Get('class/:classId/topics')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get all generated topics for a specific class' })
+  async getTopicsForClass(@Param('classId') classId: string, @Req() req) {
+    const user = req.user;
+    const cdnUrl = `${process.env.CDN_URL!}/cdn/class/${classId}/topics?userId=${user.userId}`;
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(cdnUrl)
+      );
+      return response.data;
+    } catch (error) {
+      if (error.response?.status === 403) {
+          throw new ForbiddenException(error.response.data.message);
+      }
+      throw new BadRequestException(error.response?.data?.message || 'Failed to fetch topics');
+    }
+  }
 }
+
 
 // =========================================================================
 // === PROCESSING CONTROLLER ===

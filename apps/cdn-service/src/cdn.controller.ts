@@ -1,10 +1,10 @@
-import { Controller, Post, Body, Get, Logger, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Body, Get, Logger, BadRequestException, Param, Query } from '@nestjs/common';
 import { CdnService } from './cdn.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApiBody, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { UploadFileDto } from './dtos/upload-file.dto';
-import { CreateClassDto } from './entities/create-class.dto';
+import { CreateClassDto } from './dtos/create-class.dto';
 
 @ApiTags('CDN')
 @Controller('cdn')
@@ -18,14 +18,6 @@ export class CdnController {
 
   @Get('health')
   healthCheck() { return 'OK'; }
-
-  @Post('create-class')
-  @ApiOperation({ summary: 'Create or Update a class' })
-  async createClass(@Body() body: CreateClassDto) {
-      this.logger.log(`Received CreateClass Request: ${JSON.stringify(body)}`); 
-      
-      return this.cdnService.createClass(body);
-  }
   
   @Post('upload')
   @ApiOperation({ summary: 'Upload batch of files' })
@@ -76,5 +68,28 @@ export class CdnController {
       } catch (error) {
           this.logger.error(`Failed to trigger processing: ${error.message}`);
       }
+  }
+
+  @Post('create-class')
+  @ApiOperation({ summary: 'Create or Update a class' })
+  async createClass(@Body() body: CreateClassDto) {
+      this.logger.log(`Received CreateClass Request: ${JSON.stringify(body)}`); 
+      
+      return this.cdnService.createClass(body);
+  }
+
+  @Get('user/:userId')
+  @ApiOperation({ summary: 'Get all classes belonging to a specific user' })
+  async getUserClasses(@Param('userId') userId: string) {
+      return this.cdnService.getClassesForUser(userId);
+  }
+
+  @Get('class/:classId/topics')
+  @ApiOperation({ summary: 'Get topics for a class' })
+  async getTopics(
+    @Param('classId') classId: string,
+    @Query('userId') userId: string
+  ) {
+    return this.cdnService.getTopicsForClass(classId, userId);
   }
 }

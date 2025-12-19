@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, ForbiddenException } from '@nestjs/common';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -7,7 +7,8 @@ import { pdf } from 'pdf-to-img';
 import { InjectRepository } from '@nestjs/typeorm'; 
 import { Repository } from 'typeorm';                
 import { ClassEntity } from './entities/class.entity';
-import { CreateClassDto } from './entities/create-class.dto';
+import { CreateClassDto } from './dtos/create-class.dto';
+import { TopicEntity } from './entities/topics.entity';
 
 @Injectable()
 export class CdnService {
@@ -26,7 +27,10 @@ export class CdnService {
 
   constructor(
     @InjectRepository(ClassEntity)
-    private classesRepository: Repository<ClassEntity> 
+    private classesRepository: Repository<ClassEntity>,
+    
+    @InjectRepository(TopicEntity)
+    private topicsRepository: Repository<TopicEntity>
   ) {
     this.ensureTempDir();
   }
@@ -142,6 +146,40 @@ export class CdnService {
     } finally {
       await fs.unlink(tempFilePath).catch(() => {});
     }
+  }
+
+  async getClassesForUser(userId: string) {
+    this.logger.log(`Fetching classes for User ID: ${userId}`);
+    try {
+      return await this.classesRepository.find({
+        where: { userId: userId },
+        order: { createdAt: 'DESC' }
+      });
+    } catch (error) {
+      this.logger.error(`Error fetching classes: ${error.message}`);
+      throw new BadRequestException('Failed to fetch user classes');
+    }
+  }
+
+  async getTopicsForClass(classId: string, userId: string) { // <--- Added userId arg
+    this.logger.log(`Fetching topics for Class ${classId}, User ${userId}`);
+    const classEntity = await this.classesRepository.findOne({ 
+        where: { id: classId } 
+    });
+
+    if (!classEntity) {
+        throw new BadRequestException('Class not found');
+    }
+
+    // 2. SECURITY CHECK: Does this class belong to the user?
+    if (classEntity.userId !== userId) {
+        this.logger.warn(`User ${userId} tried to access class ${classId} belonging to ${classEntity.userId}`);
+        throw new ForbiddenException('You do not have permission to view this class.');
+    }
+    return this.topicsRepository.find({
+      where: { classId: classId },
+      order: { createdAt: 'ASC' }
+    });
   }
   
   private async processPdfTextOnly(pdfPath: string, originalFilename: string): Promise<string> {
