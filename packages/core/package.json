@@ -1,0 +1,7 @@
+{
+  "name": "@repo/core",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/main.ts",
+  "types": "./src/main.ts"
+}
