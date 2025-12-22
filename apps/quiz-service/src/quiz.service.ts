@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
-import { StudyMode } from './dtos/create-quiz.dto';
-import { Topic } from './entities/topic.entity';
+import { StudyMode } from '@repo/database';
+import { TopicEntity } from '@repo/database';
 import { QuizAi } from './helpers/quiz.ai';
 import { QuizHelpers } from './helpers/quiz.helper';
 
@@ -11,8 +11,8 @@ export class QuizService {
   private logger = new Logger(QuizService.name);
 
   constructor(
-    @InjectRepository(Topic)
-    private topicsRepository: Repository<Topic>,
+    @InjectRepository(TopicEntity)
+    private topicsRepository: Repository<TopicEntity>,
     private helpers: QuizHelpers,
     private ai: QuizAi,
   ) {}

@@ -54,5 +54,10 @@
     "sharp": "^0.34.4",
     "tesseract.js": "^6.0.1",
     "typeorm": "^0.3.28"
+  },
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true
   }
 }

@@ -4,8 +4,8 @@ import { CdnController } from './cdn.controller';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm'
-import { ClassEntity } from './entities/class.entity';
-import { TopicEntity } from './entities/topics.entity';
+import { ClassEntity } from '@repo/database';
+import { TopicEntity } from '@repo/database';
 
 @Module({
   controllers: [CdnController],

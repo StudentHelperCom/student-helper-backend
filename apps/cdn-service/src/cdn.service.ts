@@ -6,9 +6,7 @@ import { createWorker } from 'tesseract.js';
 import { pdf } from 'pdf-to-img';
 import { InjectRepository } from '@nestjs/typeorm'; 
 import { Repository } from 'typeorm';                
-import { ClassEntity } from './entities/class.entity';
-import { CreateClassDto } from './dtos/create-class.dto';
-import { TopicEntity } from './entities/topics.entity';
+import { ClassEntity, CreateClassDto, TopicEntity } from '@repo/database';
 
 @Injectable()
 export class CdnService {

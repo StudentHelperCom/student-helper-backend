@@ -5,7 +5,8 @@ import { ProcessingController } from './processing.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ProcessingHelpers } from './helpers/processing.helpers';
 import { ProcessingAi } from './helpers/processing.ai';
-import { Topic } from './entities/topic.entity';
+import { TopicEntity } from '@repo/database';
+
 
 
 @Module({
@@ -22,12 +23,12 @@ import { Topic } from './entities/topic.entity';
       username: process.env.DB_USER!,
       password: process.env.DB_PASS!,
       database: process.env.DB_NAME!,
-      entities: [Topic],
+      entities: [TopicEntity],
       synchronize: true,
       ssl: { rejectUnauthorized: false },
       autoLoadEntities: true,
     }),
-    TypeOrmModule.forFeature([Topic]),
+    TypeOrmModule.forFeature([TopicEntity]),
   ]
 })
 export class ProcessingModule {}

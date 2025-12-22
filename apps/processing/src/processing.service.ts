@@ -4,7 +4,7 @@ import * as path from 'path';
 import { ProcessingAi } from './helpers/processing.ai';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Topic } from './entities/topic.entity';
+import { TopicEntity } from '@repo/database';
 import { randomUUID } from 'crypto';
 
 const BATCH_SIZE = 3;
@@ -16,8 +16,8 @@ export class ProcessingService {
   constructor(
     private readonly helpers: ProcessingHelpers,
     private readonly aiService: ProcessingAi,
-    @InjectRepository(Topic) 
-    private topicsRepository: Repository<Topic>,
+    @InjectRepository(TopicEntity) 
+    private topicsRepository: Repository<TopicEntity>,
   ) {}
 
   async executeFullWorkflow(classId: string) {
@@ -267,7 +267,7 @@ export class ProcessingService {
     }
 
     const generatedFiles: string[] = [];
-    const topicEntities: Topic[] = [];
+    const topicEntities: TopicEntity[] = [];
 
     // Parallel upload of split files
     const uploadPromises = topics.map(async (topic) => {

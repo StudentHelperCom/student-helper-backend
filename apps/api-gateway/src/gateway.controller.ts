@@ -16,8 +16,8 @@ import { FilesInterceptor } from '@nestjs/platform-express';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger'; 
-import { AuthDto } from './auth.dto';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
+import { AuthDto } from '@repo/database';
 
 // =========================================================================
 // === HEALTHCHECK ===
