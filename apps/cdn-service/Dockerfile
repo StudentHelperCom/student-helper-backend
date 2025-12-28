@@ -51,14 +51,21 @@ RUN apk add --no-cache \
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nestjs
 
-COPY --from=builder /app/apps/cdn-service/package.json ./
-COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/dist ./dist
-COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
+# 1. Copy Shared Packages to their original location
 COPY --from=builder --chown=nestjs:nodejs /app/packages ./packages
-COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/*.traineddata ./
+
+# 2. Copy the App to its original deep location
+# Note: Docker creates the parent directories automatically
+COPY --from=builder /app/apps/cdn-service/package.json ./apps/cdn-service/package.json
+COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/dist ./apps/cdn-service/dist
+COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/*.traineddata ./apps/cdn-service/
+
+# 3. Copy Node Modules to the root (where they are expected)
+COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
 
 USER nestjs
 
 EXPOSE 10000
 
-CMD ["node", "dist/main.js"]
+# FIX: Update the start command to point to the deep file
+CMD ["node", "apps/cdn-service/dist/main.js"]
