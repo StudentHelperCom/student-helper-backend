@@ -54,10 +54,11 @@ RUN adduser --system --uid 1001 nestjs
 COPY --from=builder /app/apps/cdn-service/package.json ./
 COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/dist ./dist
 COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nestjs:nodejs /app/packages ./packages
 COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/*.traineddata ./
 
 USER nestjs
 
-EXPOSE 3000
+EXPOSE 10000
 
 CMD ["node", "dist/main.js"]
