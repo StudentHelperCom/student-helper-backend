@@ -63,6 +63,10 @@ COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/*.traineddata ./
 # 3. Copy Node Modules to the root (where they are expected)
 COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
 
+# 4. Create Temp Directory & Fix Permissions
+# The logs showed the app trying to write to '/app/temp_processing'
+RUN mkdir -p /app/temp_processing && chown -R nestjs:nodejs /app/temp_processing
+
 USER nestjs
 
 EXPOSE 10000
