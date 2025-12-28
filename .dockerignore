@@ -1,0 +1,33 @@
+# Dependencies (we install them fresh inside Docker)
+node_modules
+**/node_modules
+
+# Build outputs
+dist
+out
+build
+.next
+.turbo
+
+# Environment variables (Never put these in an image!)
+.env
+.env.local
+.env.*
+
+# Git history (Heavy and unnecessary)
+.git
+.gitignore
+
+# Turborepo logs
+.turbo
+
+# IDE files
+.vscode
+.idea
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Specific to your CDN service (Avoid baking temp files into the image)
+apps/cdn-service/temp_processing/*
