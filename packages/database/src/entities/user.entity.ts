@@ -1,4 +1,4 @@
-import { BaseEntity, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { BaseEntity, Column, Entity, PrimaryGeneratedColumn, Index } from 'typeorm';
 
 @Entity('users')
 export class UserEntity extends BaseEntity {
@@ -11,6 +11,7 @@ export class UserEntity extends BaseEntity {
   @Column({ type: 'varchar', length: 100, nullable: false })
   password!: string; 
 
+  @Index() // Speed up queries filtering by last activity
   @Column({ type: 'timestamp', nullable: true })
   lastActivityDate?: Date | null
-  }
+}
