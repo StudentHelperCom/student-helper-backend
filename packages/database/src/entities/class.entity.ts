@@ -1,34 +1,33 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
-import { UserEntity } from './user.entity.js';
-
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany, JoinColumn, Unique, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { User } from './user.entity.js';
+import type { Topic } from './topic.entity.js';
 
 @Entity('classes')
-export class ClassEntity {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+@Unique('uq_user_class_name', ['user', 'name']) 
+export class Class {
+  @PrimaryGeneratedColumn('identity', { generatedIdentity: 'ALWAYS' })
+  classID: string;
 
-  @Index()
-  @Column()
-  userId: string;
+  @Column({ length: 100 })
+  name: string;
 
-  // This establishes the Foreign Key constraint
-  @ManyToOne(() => UserEntity, (user) => user.id, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'userId' })
-  user: UserEntity;
-
-  @Column()
-  name: string; 
-
-  @Index()
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   examDate: Date;
 
-  @Column({ nullable: true })
+  @Column({ length: 150, nullable: true })
   examLocation: string;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
-
-  @UpdateDateColumn()
+  
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
+  
+  @ManyToOne(() => User, (user) => user.classes, { onDelete: 'CASCADE', nullable: false })
+  @JoinColumn({ name: 'userID' })
+  user: User;
+
+  // Use string reference 'Topic' here too
+  @OneToMany('Topic', 'class')
+  topics: Topic[];
 }

@@ -4,7 +4,7 @@ import * as path from 'path';
 import { ProcessingAi } from './helpers/processing.ai';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { TopicEntity } from '@repo/database';
+import { Topic } from '@repo/database';
 import { randomUUID } from 'crypto';
 
 const BATCH_SIZE = 3;
@@ -16,8 +16,8 @@ export class ProcessingService {
   constructor(
     private readonly helpers: ProcessingHelpers,
     private readonly aiService: ProcessingAi,
-    @InjectRepository(TopicEntity) 
-    private topicsRepository: Repository<TopicEntity>,
+    @InjectRepository(Topic) 
+    private topicsRepository: Repository<Topic>,
   ) {}
 
   async executeFullWorkflow(classId: string) {
@@ -267,33 +267,30 @@ export class ProcessingService {
     }
 
     const generatedFiles: string[] = [];
-    const topicEntities: TopicEntity[] = [];
+    const topicEntities: Topic[] = [];
 
     // Parallel upload of split files
     const uploadPromises = topics.map(async (topic) => {
-        // 1. ZMIANA: Generujemy UUID dla bazy danych RĘCZNIE tutaj
-        const newTopicId = randomUUID(); 
+      // 1. Generate UUID
+      const newTopicId = randomUUID(); 
 
-        // 2. Używamy tego UUID jako nazwy pliku S3 (zamiast random id)
-        const fileName = `${newTopicId}.pdf`; 
-        const finalKey = `${rootFolderPrefix}${fileName}`;
-        
-        // 3. Generujemy PDF
-        // Przekazujemy ID tylko po to, żeby było w stopce PDF (opcjonalnie)
-        const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId);
-        
-        await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
-        generatedFiles.push(finalKey);
-        
-        // 4. Tworzymy encję z ręcznie przypisanym ID
-        const newTopic = this.topicsRepository.create({
-            id: newTopicId, // <--- Przypisujemy wygenerowane wyżej ID
-            classId: classId,
-            topicName: topic.name,
-            // topicRandomId - USUNIĘTE
-        });
-        topicEntities.push(newTopic);
-    });
+      // 2. Filename for S3
+      const fileName = `${newTopicId}.pdf`; 
+      const finalKey = `${rootFolderPrefix}${fileName}`;
+      
+      // 3. Generate PDF
+      const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId);
+      await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
+      generatedFiles.push(finalKey);
+      
+      const newTopic = this.topicsRepository.create({
+          topicID: newTopicId,         
+          name: topic.name,            
+          class: { classID: classId } as any,
+      });
+      
+      topicEntities.push(newTopic);
+  });
 
     await Promise.all(uploadPromises);
     

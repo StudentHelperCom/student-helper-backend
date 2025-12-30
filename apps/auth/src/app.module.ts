@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
-import { UserEntity } from '@repo/database';
+import { Class, Topic, User } from '@repo/database';
 
 @Module({
   imports: [
@@ -19,7 +19,7 @@ import { UserEntity } from '@repo/database';
       username: process.env.DB_USER!,
       password: process.env.DB_PASS!,
       database: process.env.DB_NAME!,
-      entities: [UserEntity],
+      entities: [User, Class, Topic],
       synchronize: true,
       ssl: { rejectUnauthorized: false },
       autoLoadEntities: true,

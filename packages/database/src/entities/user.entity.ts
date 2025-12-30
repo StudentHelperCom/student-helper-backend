@@ -1,17 +1,27 @@
-import { BaseEntity, Column, Entity, PrimaryGeneratedColumn, Index } from 'typeorm';
+ 
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, OneToMany, Index } from 'typeorm';
+import { Class } from './class.entity.js';
+
 
 @Entity('users')
-export class UserEntity extends BaseEntity {
+export class User {
   @PrimaryGeneratedColumn('uuid')
-  id!: string;
+  userID: string;
 
-  @Column({ type: 'varchar', length: 100, unique: true, nullable: false })
-  login!: string; 
+  @Index('idx_users_email', { unique: true }) 
+  @Column({ length: 255 })
+  email: string;
 
-  @Column({ type: 'varchar', length: 100, nullable: false })
-  password!: string; 
+  @Column({ length: 255 })
+  passwordHash: string;
 
-  @Index() // Speed up queries filtering by last activity
-  @Column({ type: 'timestamp', nullable: true })
-  lastActivityDate?: Date | null
+  @CreateDateColumn({ type: 'timestamptz' })
+  registrationDate: Date;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  lastActivityDate: Date;
+
+  // Relationship: One User has Many Classes
+  @OneToMany(() => Class, (cls) => cls.user)
+  classes: Class[];
 }

@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { PassportModule } from '@nestjs/passport';
-import { JwtStrategy } from './common/jwt.strategy';
+import { JwtStrategy } from './jwt/jwt.strategy';
 import { CdnController, AuthController, ProcessingController, HealthController, QuizController } from './gateway.controller';
 
 @Module({

@@ -1,8 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
-import { StudyMode } from '@repo/database';
-import { TopicEntity } from '@repo/database';
+import { StudyMode, Topic } from '@repo/database'; // Ensure StudyMode is exported from @repo/database
 import { QuizAi } from './helpers/quiz.ai';
 import { QuizHelpers } from './helpers/quiz.helper';
 
@@ -11,16 +10,17 @@ export class QuizService {
   private logger = new Logger(QuizService.name);
 
   constructor(
-    @InjectRepository(TopicEntity)
-    private topicsRepository: Repository<TopicEntity>,
+    @InjectRepository(Topic)
+    private topicsRepository: Repository<Topic>,
     private helpers: QuizHelpers,
     private ai: QuizAi,
   ) {}
 
   async generateQuiz(mode: StudyMode, topicIds: string[]) {
+    // 1. Update query: Use 'topicID', 'name', and load 'class' relation
     const topics = await this.topicsRepository.find({
-      where: { id: In(topicIds) },
-      select: ['id', 'topicName', 'classId'] 
+      where: { topicID: In(topicIds) },
+      relations: ['class'], // Needed to access topic.class.classID
     });
 
     if (!topics || topics.length === 0) {
@@ -32,14 +32,20 @@ export class QuizService {
     
     for (const topic of topics) {
       try {
-        const text = await this.helpers.getTopicContent(topic.classId, topic.id);
+        // 2. Update references: topic.class.classID and topic.topicID
+        // (Assuming Class entity has classID as per your previous setup)
+        const text = await this.helpers.getTopicContent(
+          topic.class.classID.toString(), 
+          topic.topicID
+        );
         
         if (text && text.length > 50) {
-            combinedContent += `\n\n--- CONTENT: ${topic.topicName} ---\n${text}`;
+            // 3. Update reference: topic.name
+            combinedContent += `\n\n--- CONTENT: ${topic.name} ---\n${text}`;
             successCount++;
         }
       } catch (e) {
-        this.logger.warn(`Error downloading topic ${topic.id}`);
+        this.logger.warn(`Error downloading topic ${topic.topicID}: ${e.message}`);
       }
     }
 
@@ -47,7 +53,7 @@ export class QuizService {
         throw new BadRequestException('Failed to download files from S3 storage.');
     }
 
-    // === 1. QUIZ LOGIC ===
+    // === QUIZ LOGIC ===
     if (mode === StudyMode.QUIZ) {
       const quizJson = await this.ai.generateQuizQuestions(combinedContent);
       return {
@@ -56,7 +62,7 @@ export class QuizService {
       };
     }
     
-    // === 2. FLASHCARDS LOGIC ===
+    // === FLASHCARDS LOGIC ===
     if (mode === StudyMode.CARDS) {
       const flashcardsJson = await this.ai.generateFlashcards(combinedContent);
       return {
@@ -65,7 +71,6 @@ export class QuizService {
       };
     }
     
-    // If mode doesn't match, throw error instead of returning null
     throw new BadRequestException(`Mode ${mode} is not supported yet.`);
   }
 }

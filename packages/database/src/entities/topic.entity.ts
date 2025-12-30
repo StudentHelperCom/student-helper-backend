@@ -1,24 +1,25 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
-import { ClassEntity } from './class.entity.js';
-
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, Unique, CreateDateColumn, Index, UpdateDateColumn } from 'typeorm';
+// Use 'import type' to ensure this is erased at runtime
+import type { Class } from './class.entity.js';
 
 @Entity('topics')
-export class TopicEntity {
+@Unique('uq_class_topic_name', ['class', 'name'])
+@Index('idx_topic_class_date', ['class', 'createdAt'])
+export class Topic {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  topicID: string;
 
-  @Index() // Critical for fetching topics within a class
-  @Column({ name: 'class_id' })
-  classId: string;
-
-  @ManyToOne(() => ClassEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'class_id' })
-  class: ClassEntity;
-
-  @Index()
-  @Column({ name: 'topic_name' })
-  topicName: string;
-
-  @CreateDateColumn({ name: 'created_at' })
+  @Column({ length: 200 })
+  name: string;
+  
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
+  
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt: Date;
+
+  // Use a string for the target name to avoid the 'Class' ReferenceError
+  @ManyToOne('Class', 'topics', { onDelete: 'CASCADE', nullable: false })
+  @JoinColumn({ name: 'classID' })
+  class: Class;
 }

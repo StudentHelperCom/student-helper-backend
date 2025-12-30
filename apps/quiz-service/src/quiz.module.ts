@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { QuizController } from './quiz.controller';
 import { QuizService } from './quiz.service';
-import { ClassEntity, TopicEntity, UserEntity } from '@repo/database';
+import { User, Class, Topic } from '@repo/database';
 import { QuizHelpers } from './helpers/quiz.helper';
 import { QuizAi } from './helpers/quiz.ai';
 
@@ -20,9 +20,9 @@ import { QuizAi } from './helpers/quiz.ai';
       autoLoadEntities: true,
       synchronize: true, 
       ssl: { rejectUnauthorized: false },
-      entities: [TopicEntity, UserEntity, ClassEntity],
+      entities: [User, Class, Topic],
     }),
-    TypeOrmModule.forFeature([TopicEntity]),
+    TypeOrmModule.forFeature([User, Class, Topic]),
   ],
   controllers: [QuizController],
   providers: [QuizService, QuizHelpers, QuizAi],

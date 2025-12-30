@@ -5,8 +5,8 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
 import { pdf } from 'pdf-to-img';
 import { InjectRepository } from '@nestjs/typeorm'; 
-import { Repository } from 'typeorm';                
-import { ClassEntity, CreateClassDto, TopicEntity } from '@repo/database';
+import { Repository } from 'typeorm';                 
+import { Class, CreateClassDto, Topic } from '@repo/database';
 
 @Injectable()
 export class CdnService {
@@ -24,11 +24,11 @@ export class CdnService {
   private bucket = process.env.AWS_S3_BUCKET!;
 
   constructor(
-    @InjectRepository(ClassEntity)
-    private classesRepository: Repository<ClassEntity>,
+    @InjectRepository(Class)
+    private classesRepository: Repository<Class>,
     
-    @InjectRepository(TopicEntity)
-    private topicsRepository: Repository<TopicEntity>
+    @InjectRepository(Topic)
+    private topicsRepository: Repository<Topic>
   ) {
     this.ensureTempDir();
   }
@@ -45,34 +45,33 @@ export class CdnService {
       this.logger.log(`Service creating class for User: ${data.userId}, Name: ${data.className}`);
       
       try {
+        // Updated search query to use the new userID field via relation
         let classEntity = await this.classesRepository.findOne({ 
-            where: { userId: data.userId, name: data.className } 
+            where: { user: { userID: data.userId }, name: data.className } 
         });
 
         if (!classEntity) {
             this.logger.log('Class not found. Creating new...');
             classEntity = this.classesRepository.create({
-                userId: data.userId,
+                user: { userID: data.userId } as any, // Link to UserID
                 name: data.className,
                 examDate: data.examDate ? new Date(data.examDate) : undefined,
                 examLocation: data.examLocation
             });
         } else {
-            this.logger.log(`Class found (ID: ${classEntity.id}). Updating metadata...`);
-            this.logger.log(`New Date: ${data.examDate}, New Loc: ${data.examLocation}`);
+            this.logger.log(`Class found (ID: ${classEntity.classID}). Updating metadata...`);
             
             if (data.examDate) classEntity.examDate = new Date(data.examDate);
             if (data.examLocation) classEntity.examLocation = data.examLocation;
         }
 
         const saved = await this.classesRepository.save(classEntity);
-        this.logger.log(`Class saved successfully. ID: ${saved.id}`);
+        this.logger.log(`Class saved successfully. ID: ${saved.classID}`);
 
-        //S3
-        const folderKey = `${saved.id}/`;
+        // Create a folder in S3 named after the classID (number)
+        const folderKey = `${saved.classID}/`;
         await this.uploadToS3(folderKey, Buffer.from(''));
-        this.logger.log(`S3 Folder created: ${folderKey}`);
-
+        
         return saved;
 
       } catch (error) {
@@ -93,18 +92,18 @@ export class CdnService {
     try {
       // 1. === DATABASE LOGIC ===
       let classEntity = await this.classesRepository.findOne({ 
-        where: { userId: data.userId, name: data.className } 
+        where: { user: { userID: data.userId }, name: data.className } 
       });
 
       if (!classEntity) {
         classEntity = this.classesRepository.create({
-          userId: data.userId,
+          user: { userID: data.userId } as any,
           name: data.className
         });
         await this.classesRepository.save(classEntity);
       }
       
-      const classId = classEntity.id; 
+      const classId = classEntity.classID; // Use new numeric property
 
       // 2. === FILE PROCESSING LOGIC ===
       await fs.writeFile(tempFilePath, data.content);
@@ -147,35 +146,29 @@ export class CdnService {
   }
 
   async getClassesForUser(userId: string) {
-    this.logger.log(`Fetching classes for User ID: ${userId}`);
-    try {
-      return await this.classesRepository.find({
-        where: { userId: userId },
-        order: { createdAt: 'DESC' }
-      });
-    } catch (error) {
-      this.logger.error(`Error fetching classes: ${error.message}`);
-      throw new BadRequestException('Failed to fetch user classes');
-    }
+    return await this.classesRepository.find({
+      where: { user: { userID: userId } },
+      order: { createdAt: 'DESC' }
+    });
   }
 
-  async getTopicsForClass(classId: string, userId: string) { // <--- Added userId arg
-    this.logger.log(`Fetching topics for Class ${classId}, User ${userId}`);
+  async getTopicsForClass(classId: string, userId: string) {
     const classEntity = await this.classesRepository.findOne({ 
-        where: { id: classId } 
+        where: { classID: classId },
+        relations: ['user'] // Required to check the owner
     });
 
     if (!classEntity) {
         throw new BadRequestException('Class not found');
     }
 
-    // 2. SECURITY CHECK: Does this class belong to the user?
-    if (classEntity.userId !== userId) {
-        this.logger.warn(`User ${userId} tried to access class ${classId} belonging to ${classEntity.userId}`);
+    // Security Check
+    if (classEntity.user.userID !== userId) {
         throw new ForbiddenException('You do not have permission to view this class.');
     }
+
     return this.topicsRepository.find({
-      where: { classId: classId },
+      where: { class: { classID: classId } },
       order: { createdAt: 'ASC' }
     });
   }
@@ -185,6 +178,7 @@ export class CdnService {
     try {
       const pdfBuffer = await fs.readFile(pdfPath);
       let text = '';
+      
       try {
         const pdfExtraction = require('pdf-extraction');
         const data = await pdfExtraction(pdfBuffer);
@@ -192,6 +186,7 @@ export class CdnService {
       } catch (e) {
         this.logger.warn(`Standard extraction failed: ${e.message}`);
       }
+
       if (!text || text.length < 50) {
         const worker = await createWorker('eng+pol');
         text = '';
@@ -202,10 +197,12 @@ export class CdnService {
         }
         await worker.terminate();
       }
+
       if (!text.trim()) text = "[ERROR: No text found even after OCR]";
       await fs.writeFile(txtPath, text, 'utf8');
       return txtPath;
     } catch (err) {
+      this.logger.error(`PDF Processing error: ${err.message}`);
       throw err;
     }
   }
@@ -226,12 +223,20 @@ export class CdnService {
   private sanitizeFilename(filename: string): string {
     const baseName = path.basename(filename, path.extname(filename));
     const ext = path.extname(filename);
-    const safeName = baseName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 100);
+    const safeName = baseName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .substring(0, 100);
     return safeName + ext.toLowerCase();
   }
 
   private async uploadToS3(key: string, content: Buffer) {
-    await this.s3.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: content }));
+    await this.s3.send(new PutObjectCommand({ 
+        Bucket: this.bucket, 
+        Key: key, 
+        Body: content 
+    }));
   }
 
   private getPublicUrl(key: string) {
