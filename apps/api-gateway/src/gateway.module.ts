@@ -4,12 +4,15 @@ import { HttpModule } from '@nestjs/axios';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './jwt/jwt.strategy';
 import { CdnController, AuthController, ProcessingController, HealthController, QuizController } from './gateway.controller';
+import { configValidationSchema } from '../config-validation.schema';
+
 
 @Module({
   imports: [
     ConfigModule.forRoot({ 
       isGlobal: true,
-      envFilePath: '.env'
+      validationSchema: configValidationSchema, // Add validation
+      envFilePath: '.env', // Use ../../.env if file is in root
     }),
     HttpModule.registerAsync({
       useFactory: () => ({
