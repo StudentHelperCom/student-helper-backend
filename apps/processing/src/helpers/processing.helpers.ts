@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config'; // Import this
 import { 
   S3Client, 
   GetObjectCommand, 
@@ -13,28 +14,31 @@ import fontkit from '@pdf-lib/fontkit';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Helper for pausing execution
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 @Injectable()
 export class ProcessingHelpers {
   private readonly logger = new Logger(ProcessingHelpers.name);
+  private readonly s3: S3Client;
+  private readonly bucket: string;
 
-  // Environment Config
-  private bucket = process.env.AWS_S3_BUCKET!;
-
-  // S3 Client Initialization
-  private s3 = new S3Client({
-    region: process.env.AWS_REGION!,
-    credentials: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-    },
-    requestHandler: {
+  constructor(private readonly configService: ConfigService) {
+    // 1. Initialize S3 inside the constructor using ConfigService
+    this.s3 = new S3Client({
+      region: this.configService.getOrThrow<string>('AWS_REGION'),
+      credentials: {
+        accessKeyId: this.configService.getOrThrow<string>('AWS_ACCESS_KEY_ID'),
+        secretAccessKey: this.configService.getOrThrow<string>('AWS_SECRET_ACCESS_KEY'),
+      },
+      requestHandler: {
         connectionTimeout: 5000,
-        socket: 5000,
-    } as any
-  });
+        socketTimeout: 5000,
+      } as any
+    });
+
+    // 2. Safely retrieve the bucket name
+    this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
+  }
 
   // -------------------------------------------------------------------------
   // S3 & File Helpers

@@ -1,12 +1,12 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './gateway.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ConfigService } from '@nestjs/config';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
+import { clc } from '@nestjs/common/utils/cli-colors.util';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap'); 
   const app = await NestFactory.create(AppModule);
-  const configService = app.get(ConfigService);
   
   const port = parseInt(process.env.PORT!, 10);
   
@@ -35,8 +35,8 @@ async function bootstrap() {
   });
 
   await app.listen(port, '0.0.0.0');
-  console.log(`API Gateway running on port ${port}`);
-  console.log(`Swagger documentation: http://localhost:${port}/api/doc`);
+  logger.log(clc.cyanBright(`API Gateway running on port ${port}`));
+  logger.log(clc.cyanBright(`Swagger documentation: http://localhost:${port}/api/doc`));
 }
 
 bootstrap();

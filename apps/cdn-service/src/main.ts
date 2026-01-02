@@ -1,11 +1,12 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { json, urlencoded } from 'express';
 import { CdnModule } from './cdn.module';
+import { clc } from '@nestjs/common/utils/cli-colors.util';
 
 async function bootstrap() {
   const app = await NestFactory.create(CdnModule);
-  
+  const logger = new Logger('Bootstrap');
   const port = parseInt(process.env.PORT!, 10);
   
   app.use(json({ limit: '50mb' }));
@@ -17,7 +18,7 @@ async function bootstrap() {
   }));
 
   await app.listen(port, '0.0.0.0');
-  console.log(`CDN Service running on port ${port}`);
+  logger.log(clc.cyanBright(`CDN Service running on port ${port}`));
 }
 
 bootstrap();

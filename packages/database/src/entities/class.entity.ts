@@ -5,7 +5,7 @@ import type { Topic } from './topic.entity.js';
 @Entity('classes')
 @Unique('uq_user_class_name', ['user', 'name']) 
 export class Class {
-  @PrimaryGeneratedColumn('identity', { generatedIdentity: 'ALWAYS' })
+  @PrimaryGeneratedColumn('uuid')
   classID: string;
 
   @Column({ length: 100 })
