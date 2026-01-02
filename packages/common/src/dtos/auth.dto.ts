@@ -10,7 +10,7 @@ export class AuthDto {
   @IsString({ message: 'Login must be a string.' })
   @IsNotEmpty({ message: 'Login cannot be empty.' })
   @MaxLength(100, { message: 'Login can have at most 100 characters.' })
-  login: string; // Note: Changed to 'email' to match your gateway
+  login!: string; // Note: Changed to 'email' to match your gateway
 
   @ApiProperty({
     example: 'Password123!',
@@ -20,5 +20,5 @@ export class AuthDto {
   @IsNotEmpty({ message: 'Password cannot be empty.' })
   @MinLength(6, { message: 'Password must be at least 6 characters long.' })
   @MaxLength(30, { message: 'Password can have at most 30 characters.' })
-  password: string;
+  password!: string;
 }

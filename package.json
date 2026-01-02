@@ -24,7 +24,9 @@
   "packageManager": "npm@10.9.2",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "common", 
+    "database"
   ],
   "dependencies": {
     "@aws-sdk/client-s3": "^3.929.0",
@@ -40,6 +42,7 @@
     "canvas": "^3.2.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
+    "joi": "^18.0.2",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pdf-extraction": "^1.0.2",

@@ -11,11 +11,11 @@ export enum StudyMode {
 export class CreateQuizDto {
   @ApiProperty({ example: 'Quiz', enum: StudyMode })
   @IsEnum(StudyMode)
-  mode: StudyMode;
+  mode!: StudyMode;
 
   @ApiProperty({ example: ['uuid-1', 'uuid-2'], description: 'Topics ID list' })
   @IsArray()
   @IsString({ each: true })
   @IsNotEmpty()
-  topicIds: string[];
+  topicIds!: string[];
 }

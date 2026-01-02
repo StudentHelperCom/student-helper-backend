@@ -7,7 +7,8 @@ import { createWorker } from 'tesseract.js';
 import { pdf } from 'pdf-to-img';
 import { InjectRepository } from '@nestjs/typeorm'; 
 import { Repository } from 'typeorm';                 
-import { Class, CreateClassDto, Topic } from '@repo/database';
+import { Class, Topic } from '@repo/database';
+import { CreateClassDto } from '@repo/common';
 
 @Injectable()
 export class CdnService implements OnModuleInit {

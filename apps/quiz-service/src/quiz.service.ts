@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
-import { StudyMode, Topic } from '@repo/database'; // Ensure StudyMode is exported from @repo/database
+import { Topic } from '@repo/database'; // Ensure StudyMode is exported from @repo/database
+import { StudyMode } from '@repo/common';
 import { QuizAi } from './helpers/quiz.ai';
 import { QuizHelpers } from './helpers/quiz.helper';
 

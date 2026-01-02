@@ -5,22 +5,22 @@ export class UploadFileDto {
   @ApiProperty({ example: 'lecture_notes.pdf', description: 'Name of the file' })
   @IsString()
   @IsNotEmpty()
-  filename: string;
+  filename!: string;
 
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
-  content: string;
+  content!: string;
 
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
-  userId: string;
+  userId!: string;
 
   @ApiProperty({ example: 'Mathematics 101' })
   @IsString()
   @IsNotEmpty()
-  className: string;
+  className!: string;
 
   @ApiProperty({ example: '2025-06-15T09:00:00Z', required: false })
   @IsString()

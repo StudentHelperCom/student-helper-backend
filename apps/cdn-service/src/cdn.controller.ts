@@ -3,8 +3,8 @@ import { CdnService } from './cdn.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApiBody, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { UploadFileDto } from '@repo/database';
-import { CreateClassDto } from '@repo/database';
+import { UploadFileDto } from '@repo/common';
+import { CreateClassDto } from '@repo/common';
 
 @ApiTags('CDN')
 @Controller('cdn')

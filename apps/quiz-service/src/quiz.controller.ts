@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get } from '@nestjs/common';
 import { QuizService } from './quiz.service';
-import { CreateQuizDto } from '@repo/database';
+import { CreateQuizDto } from '@repo/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('Quiz')
