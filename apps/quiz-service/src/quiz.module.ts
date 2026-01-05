@@ -6,7 +6,7 @@ import { QuizService } from './quiz.service';
 import { User, Class, Topic } from '@repo/database';
 import { QuizHelpers } from './helpers/quiz.helper';
 import { QuizAi } from './helpers/quiz.ai';
-import { configValidationSchema } from '../config-validation.schema'; 
+import { configValidationSchema } from './config-validation.schema'; 
 
 @Module({
   imports: [

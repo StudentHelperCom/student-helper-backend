@@ -4,7 +4,7 @@ import { HttpModule } from '@nestjs/axios';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './jwt/jwt.strategy';
 import { CdnController, AuthController, ProcessingController, HealthController, QuizController } from './gateway.controller';
-import { configValidationSchema } from '../config-validation.schema';
+import { configValidationSchema } from './config-validation.schema';
 
 
 @Module({
