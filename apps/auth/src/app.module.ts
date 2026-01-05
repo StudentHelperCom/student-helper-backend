@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { Class, Topic, User } from '@repo/database';
-import { configValidationSchema } from 'config-validation.schema';
+import { configValidationSchema } from './config-validation.schema';
 
 @Module({
   imports: [
