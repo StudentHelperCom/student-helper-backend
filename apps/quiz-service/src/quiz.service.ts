@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
-import { Topic } from '@repo/database'; // Ensure StudyMode is exported from @repo/database
+import { Topic } from '@repo/database';
 import { StudyMode } from '@repo/common';
-import { QuizAi } from './helpers/quiz.ai';
-import { QuizHelpers } from './helpers/quiz.helper';
+import { QuizAiService } from './quiz-ai.service';
+import { QuizLogicService } from './quiz-logic.service';
 
 @Injectable()
 export class QuizService {
@@ -13,15 +13,14 @@ export class QuizService {
   constructor(
     @InjectRepository(Topic)
     private topicsRepository: Repository<Topic>,
-    private helpers: QuizHelpers,
-    private ai: QuizAi,
+    private helpers: QuizLogicService,
+    private ai: QuizAiService,
   ) {}
 
   async generateQuiz(mode: StudyMode, topicIds: string[]) {
-    // 1. Update query: Use 'topicID', 'name', and load 'class' relation
     const topics = await this.topicsRepository.find({
       where: { topicID: In(topicIds) },
-      relations: ['class'], // Needed to access topic.class.classID
+      relations: ['class'],
     });
 
     if (!topics || topics.length === 0) {
@@ -33,15 +32,12 @@ export class QuizService {
     
     for (const topic of topics) {
       try {
-        // 2. Update references: topic.class.classID and topic.topicID
-        // (Assuming Class entity has classID as per your previous setup)
         const text = await this.helpers.getTopicContent(
           topic.class.classID.toString(), 
           topic.topicID
         );
         
         if (text && text.length > 50) {
-            // 3. Update reference: topic.name
             combinedContent += `\n\n--- CONTENT: ${topic.name} ---\n${text}`;
             successCount++;
         }

@@ -3,8 +3,8 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 
 @Injectable()
-export class QuizHelpers {
-  private readonly logger = new Logger(QuizHelpers.name);
+export class QuizLogicService {
+  private readonly logger = new Logger(QuizLogicService.name);
   private bucket = process.env.AWS_S3_BUCKET!;
 
   private s3 = new S3Client({
@@ -19,7 +19,7 @@ export class QuizHelpers {
     const key = `${classId}/${topicRandomId}.pdf`;
     
     try {
-      this.logger.log(`Pobieranie tematu z S3: ${key}`);
+      this.logger.log(`Fetching topic from S3: ${key}`);
       
       const pdfBuffer = await this.getFileFromS3(key);
       const pdfExtraction = require('pdf-extraction');
@@ -28,13 +28,13 @@ export class QuizHelpers {
       const text = data.text;
 
       if (!text || text.trim().length < 10) {
-          this.logger.warn(`Plik ${key} wydaje się pusty lub nie zawiera warstwy tekstowej.`);
+          this.logger.warn(`File ${key} seems to be empty or does not contain a text layer.`);
           return ""; 
       }
       return text.trim();
 
     } catch (error) {
-      this.logger.error(`Błąd przetwarzania tematu ${key}: ${error.message}`);
+      this.logger.error(`Error processing topic ${key}: ${error.message}`);
       return "";
     }
   }

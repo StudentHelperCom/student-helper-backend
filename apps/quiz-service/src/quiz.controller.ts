@@ -14,7 +14,7 @@ export class QuizController {
   }
 
   @Post('generate')
-  @ApiOperation({ summary: 'Generuj quiz na podstawie wybranych tematów' })
+  @ApiOperation({ summary: 'Generate Quiz for chosen topics' })
   async generate(@Body() dto: CreateQuizDto) {
     return this.quizService.generateQuiz(dto.mode, dto.topicIds);
   }

@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 
+
 @Injectable()
-export class QuizAi {
-  private readonly logger = new Logger(QuizAi.name);
+export class QuizAiService {
+  private readonly logger = new Logger(QuizAiService.name);
   private geminiUrl = process.env.GEMINI_URL!;
   private geminiApiKey = process.env.GEMINI_API_KEY!;
 
@@ -108,11 +109,8 @@ export class QuizAi {
       const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleaned);
       
-      // Basic validation for Quiz
       if (!parsed.questions && !parsed.flashcards && Array.isArray(parsed)) {
-          // Heuristic: if it looks like questions, wrap in questions
           if (parsed.length > 0 && parsed[0].answers) return { questions: parsed };
-          // Heuristic: if it looks like flashcards, wrap in flashcards
           if (parsed.length > 0 && parsed[0].answer && !parsed[0].answers) return { flashcards: parsed };
       }
       return parsed;

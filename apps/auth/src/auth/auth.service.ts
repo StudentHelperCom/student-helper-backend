@@ -1,4 +1,3 @@
-// apps/auth/src/auth/auth.service.ts
 import { Injectable } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
@@ -12,7 +11,7 @@ export class AuthService {
     private readonly hashService: HashService,
   ) {}
 
-  async register(email: string, password: string) { // Fix: use 'email' variable name
+  async register(email: string, password: string) { 
     const existingUser = await this.usersService.findByEmail(email); 
     if (existingUser) {
       return { status: 'USER_ALREADY_EXISTS' };
@@ -21,13 +20,13 @@ export class AuthService {
     const hashedPassword = await this.hashService.hashData(password); 
 
     const created = await this.usersService.createUser({
-      email: email, // Fix: Use 'email'
-      passwordHash: hashedPassword, // Fix: Use 'passwordHash'
+      email: email,
+      passwordHash: hashedPassword,
       lastActivityDate: new Date(),
     });
 
     const token = await this.jwtService.signAsync({
-      sub: created.userID, // Fix: Use 'userID'
+      sub: created.userID,
       email: email, 
     });
 
@@ -40,18 +39,17 @@ export class AuthService {
       return { status: 'USER_NOT_FOUND' };
     }
 
-    // Fix: check against 'passwordHash'
     const isPasswordValid = await this.hashService.compareData(password, user.passwordHash); 
     if (!isPasswordValid) {
       return { status: 'INVALID_CREDENTIALS' };
     }
 
     const token = await this.jwtService.signAsync({
-      sub: user.userID, // Fix: Use 'userID'
+      sub: user.userID,
       email: email,
     });
 
-    await this.usersService.updateLastActivity(user.userID); // Fix: Use 'userID'
+    await this.usersService.updateLastActivity(user.userID); 
 
     return { status: 'SUCCESS', idu: token };
   }

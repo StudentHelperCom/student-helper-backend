@@ -4,9 +4,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { QuizController } from './quiz.controller';
 import { QuizService } from './quiz.service';
 import { User, Class, Topic } from '@repo/database';
-import { QuizHelpers } from './helpers/quiz.helper';
-import { QuizAi } from './helpers/quiz.ai';
+
 import { configValidationSchema } from './config-validation.schema'; 
+import { QuizAiService } from './quiz-ai.service';
+import { QuizLogicService } from './quiz-logic.service';
 
 @Module({
   imports: [
@@ -26,13 +27,13 @@ import { configValidationSchema } from './config-validation.schema';
         database: config.get<string>('DB_NAME'),
         entities: [User, Class, Topic],
         autoLoadEntities: true,
-        synchronize: true, // Auto-sync for UUID changes
+        synchronize: true, 
         ssl: config.get<boolean>('DB_SSL') ? { rejectUnauthorized: false } : false,
       }),
     }),
     TypeOrmModule.forFeature([User, Class, Topic]),
   ],
   controllers: [QuizController],
-  providers: [QuizService, QuizHelpers, QuizAi],
+  providers: [QuizService, QuizLogicService, QuizAiService],
 })
 export class QuizModule {}
