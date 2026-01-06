@@ -16,7 +16,6 @@ build
 
 # Git history (Heavy and unnecessary)
 .git
-.gitignore
 
 # Turborepo logs
 .turbo

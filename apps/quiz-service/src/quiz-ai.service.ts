@@ -98,7 +98,7 @@ export class QuizAiService {
       const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
       return this.cleanAndParseJson(rawText);
 
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Gemini Error: ${error.message}`);
       throw new Error('Failed to generate content from AI.');
     }

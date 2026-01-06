@@ -1,0 +1,130 @@
+version: '3.8'
+
+services:
+  # ==============================================
+  # MICROSERVICES
+  # ==============================================
+  
+  auth:
+    build:
+      context: .
+      dockerfile: apps/auth/Dockerfile
+    container_name: auth-service
+    restart: unless-stopped
+    env_file:
+      - apps/auth/.env
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: development
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/auth/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  cdn-service:
+    build:
+      context: .
+      dockerfile: apps/cdn-service/Dockerfile
+    container_name: cdn-service
+    restart: unless-stopped
+    env_file:
+      - apps/cdn-service/.env
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PROCESSING_URL: http://processing:3003
+    depends_on:
+      processing:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/cdn/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  processing:
+    build:
+      context: .
+      dockerfile: apps/processing/Dockerfile
+    container_name: processing-service
+    restart: unless-stopped
+    env_file:
+      - apps/processing/.env
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: development
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3003/processing/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  quiz-service:
+    build:
+      context: .
+      dockerfile: apps/quiz-service/Dockerfile
+    container_name: quiz-service
+    restart: unless-stopped
+    env_file:
+      - apps/quiz-service/.env
+    ports:
+      - "3004:3004"
+    environment:
+      NODE_ENV: development
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3004/quiz/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: apps/api-gateway/Dockerfile
+    container_name: api-gateway
+    restart: unless-stopped
+    env_file:
+      - apps/api-gateway/.env
+    ports:
+      - "4001:4001"
+    environment:
+      NODE_ENV: development
+      CDN_URL: http://cdn-service:3001
+      AUTH_URL: http://auth:3002
+      PROCESSING_URL: http://processing:3003
+      QUIZ_SERVICE_URL: http://quiz-service:3004
+    depends_on:
+      auth:
+        condition: service_healthy
+      cdn-service:
+        condition: service_healthy
+      processing:
+        condition: service_healthy
+      quiz-service:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4001/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+# ==============================================
+# NETWORKS & VOLUMES
+# ==============================================
+networks:
+  backend:
+    driver: bridge

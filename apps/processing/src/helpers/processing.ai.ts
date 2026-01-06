@@ -24,7 +24,7 @@ export class ProcessingAi {
     for (let i = 0; i < attempts; i++) {
         try {
             return await this.askGemini(txt, pdf);
-        } catch (error) {
+        } catch (error: any) {
             const status = error.response?.status;
             const message = error.message || '';
 
@@ -120,7 +120,7 @@ RULES:
 
       return this.extractTextFromResponse(res);
 
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(`Gemini API merge failed: ${error.response?.data?.error?.message || error.message}`);
     }
   }
@@ -200,7 +200,7 @@ RULES:
 
       return this.extractTextFromResponse(res);
 
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(`Gemini API failed: ${error.response?.data?.error?.message || error.message}`);
     }
   }

@@ -33,7 +33,7 @@ export class QuizLogicService {
       }
       return text.trim();
 
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Error processing topic ${key}: ${error.message}`);
       return "";
     }

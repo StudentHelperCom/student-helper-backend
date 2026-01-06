@@ -30,7 +30,7 @@ export class CdnController {
     }
 
     const results: any[] = [];
-    const { userId } = data[0]; 
+    const { userId } = data[0]!; 
 
     for (const file of data) {
       const buffer = Buffer.from(file.content, 'base64');
@@ -65,7 +65,7 @@ export class CdnController {
             })
         );
         this.logger.log('Processing workflow completed successfully.');
-      } catch (error) {
+      } catch (error: any) {
           this.logger.error(`Failed to trigger processing: ${error.message}`);
       }
   }

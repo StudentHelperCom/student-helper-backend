@@ -41,7 +41,7 @@ export class QuizService {
             combinedContent += `\n\n--- CONTENT: ${topic.name} ---\n${text}`;
             successCount++;
         }
-      } catch (e) {
+      } catch (e: any) {
         this.logger.warn(`Error downloading topic ${topic.topicID}: ${e.message}`);
       }
     }

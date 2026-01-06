@@ -1,135 +1,258 @@
-# Turborepo starter
+# Student Helper Backend 🎓
 
-This Turborepo starter is maintained by the Turborepo core team.
+Production-ready microservices architecture for processing educational content using NestJS, TypeORM, and Turborepo.
 
-## Using this example
+## 🏗️ Architecture
 
-Run the following command:
+This monorepo contains 5 microservices:
 
-```sh
-npx create-turbo@latest
+- **api-gateway** (Port 4001) - Main API gateway with Swagger documentation
+- **auth** (Port 3002) - Authentication & user management  
+- **cdn-service** (Port 3001) - File upload, OCR processing, and S3 integration
+- **processing** (Port 3003) - AI-powered content processing with Gemini AI
+- **quiz-service** (Port 3004) - Automated quiz generation
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js >= 20
+- Docker & Docker Compose
+- PostgreSQL 16+
+- AWS Account (for S3)
+- Gemini API Key
+
+### Local Development
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/StudentHelperCom/student-helper-backend.git
+cd student-helper-backend
+
+# 2. Install dependencies
+npm install --legacy-peer-deps
+
+# 3. Copy environment file and configure
+cp .env.example .env
+# Edit .env with your credentials
+
+# 4. Start with Docker Compose (recommended)
+docker-compose up -d
+
+# OR start services directly
+npm run dev
 ```
 
-## What's inside?
+### Docker Development (Recommended)
 
-This Turborepo includes the following packages/apps:
+```bash
+# Build all images
+make docker-build
 
-### Apps and Packages
+# Start all services
+make docker-up
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+# View logs
+make docker-logs
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+# Stop services
+make docker-down
 ```
 
-You can build a specific package by using a [filter](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters):
+### Individual Service Development
 
-```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build --filter=docs
+```bash
+# Start specific service in development mode
+cd apps/auth && npm run start:dev
 
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-```
+# Build specific service
+npm run build -- --filter=auth
 
-### Develop
+# Run tests for specific service
+npm run test -- --filter=auth
 
-To develop all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
+# Check service in isolation
+npm run lint -- --filter=cdn-service
+npm run typecheck -- --filter=processing
 ```
 
-You can develop a specific package by using a [filter](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters):
+## 📦 Shared Packages
 
-```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev --filter=web
+- **@repo/common** - Shared DTOs, utilities, and bootstrap function
+- **@repo/database** - Database entities and shared TypeORM configuration
+- **@repo/typescript-config** - Shared TypeScript configurations
+- **@repo/eslint-config** - Shared ESLint rules
+- **@repo/jest-config** - Shared Jest configuration
 
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
+## 🛠️ Commands
 
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.com/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo login
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
+### Using Makefile
+```bash
+make help           # Show all available commands
+make install        # Install dependencies
+make build          # Build all services
+make dev            # Start development mode
+make test           # Run tests
+make lint           # Run linter
+make typecheck      # Type check
+make check          # Run all checks (lint + typecheck + test)
+make docker-build   # Build Docker images
+make docker-up      # Start Docker containers
+make docker-down    # Stop Docker containers
+make docker-logs    # View Docker logs
 ```
 
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo link
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
+### Using npm
+```bash
+npm run build         # Build all services
+npm run dev           # Start all in development
+npm run start:prod    # Start all in production
+npm run lint          # Lint all services
+npm run lint:fix      # Fix linting issues
+npm run typecheck     # Type check all services
+npm run test          # Run all tests
+npm run clean         # Clean build artifacts
 ```
 
-## Useful Links
+## 📝 Environment Variables
 
-Learn more about the power of Turborepo:
+Create `.env` files in each service directory. Required variables:
 
-- [Tasks](https://turborepo.com/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.com/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.com/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.com/docs/reference/configuration)
-- [CLI Usage](https://turborepo.com/docs/reference/command-line-reference)
+```env
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASS=password
+DB_NAME=student_helper
+DB_SSL=false
+
+# Auth Service
+JWT_SECRET=your-secret-key
+
+# CDN Service
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your-key
+AWS_SECRET_ACCESS_KEY=your-secret
+S3_BUCKET=your-bucket
+
+# AI Services
+GEMINI_API_KEY=your-api-key
+GEMINI_URL=https://api.gemini.com
+```
+
+## 🔧 Development
+
+### Adding a New Service
+
+1. Create service in `apps/` directory
+2. Add service-specific dependencies to its `package.json`
+3. Extend shared configs (`tsconfig.base.json`, `@repo/eslint-config/nest`)
+4. Use shared modules (`@repo/common`, `@repo/database`)
+
+### Code Quality
+
+- **ESLint** - Configured with TypeScript and Prettier
+- **TypeScript** - Strict mode with decorators support
+- **Prettier** - Automated code formatting
+- **Jest** - Unit and integration testing
+
+## 📚 Tech Stack
+
+### Backend
+- **NestJS** - Progressive Node.js framework
+- **TypeORM** - ORM for TypeScript
+- **PostgreSQL** - Primary database
+- **AWS S3** - File storage
+- **Gemini AI** - Content processing & quiz generation
+- **Tesseract.js** - OCR processing
+
+### Tools
+- **Turborepo** - Monorepo build system
+- **Docker** - Containerization
+- **Docker Compose** - Local development
+
+## 📁 Project Structure
+
+```
+student-helper-backend/
+├── apps/                      # Microservices
+│   ├── api-gateway/          # API Gateway (Port 4001)
+│   ├── auth/                 # Auth Service (Port 3002)
+│   ├── cdn-service/          # CDN Service (Port 3001)
+│   ├── processing/           # Processing Service (Port 3003)
+│   └── quiz-service/         # Quiz Service (Port 3004)
+├── packages/                  # Shared packages
+│   ├── common/               # Shared utilities & DTOs
+│   ├── database/             # Database entities & config
+│   ├── eslint-config/        # Shared ESLint rules
+│   ├── jest-config/          # Shared Jest config
+│   └── typescript-config/    # Shared TS config
+├── docs/                     # Documentation
+├── docker-compose.yml        # Local development setup
+├── Makefile                  # Convenience commands
+└── README.md
+```
+
+## 🚢 Deployment to Render.com
+
+### Step 1: Prepare Environment Variables
+Create a `.env.production` file or use Render's dashboard to set:
+- Database credentials (use Render PostgreSQL)
+- JWT secrets
+- AWS S3 credentials
+- Gemini API key
+
+### Step 2: Deploy Each Service
+1. Connect your GitHub repository to Render
+2. Create a new Web Service for each microservice:
+   - **api-gateway**: `apps/api-gateway/Dockerfile`, Port 4001
+   - **auth**: `apps/auth/Dockerfile`, Port 3002
+   - **cdn-service**: `apps/cdn-service/Dockerfile`, Port 3001
+   - **processing**: `apps/processing/Dockerfile`, Port 3003
+   - **quiz-service**: `apps/quiz-service/Dockerfile`, Port 3004
+
+3. Configure environment variables for each service
+4. Deploy!
+
+### Step 3: Setup Database
+1. Create a PostgreSQL database on Render
+2. Run migrations (if you have them)
+3. Update `DB_HOST` in all services to point to Render database
+
+### Health Checks
+Each service has a health check endpoint at `/health` that Render can use to verify the service is running.
+
+## 📖 API Documentation
+
+Swagger UI and health endpoints available at:
+- **API Gateway Swagger**: http://localhost:4001/api/doc (main entry point)
+- **Auth Service**: http://localhost:3002
+- **CDN Service**: http://localhost:3001
+- **Processing Service**: http://localhost:3003
+- **Quiz Service**: http://localhost:3004
+- **PostgreSQL**: `postgresql://postgres:postgres@localhost:5432/student_helper`
+
+## 🔒 Security
+
+- All Docker containers run as non-root users
+- Environment variables should never be committed
+- JWT tokens expire after 7 days
+- Use HTTPS in production
+
+## 📚 Documentation
+
+- [🐳 Docker Deployment Guide](docs/DOCKER-GUIDE.md) - **Complete Docker setup and troubleshooting**
+- [Architecture Overview](docs/ARCHITECTURE.md) - **System design and data flows**
+- [Learning Summary](docs/LEARNING-SUMMARY.md) - **Educational resources and references**
+- [Contributing Guide](CONTRIBUTING.md) - **How to contribute to the project**
+
+## 🤝 Contributing
+
+Contributions welcome! Please ensure:
+- Code passes `make check` (lint + typecheck + test)
+- Follow existing code patterns
+- Update documentation as needed
+
+## 📄 License
+
+UNLICENSED - Private project

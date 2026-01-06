@@ -44,7 +44,7 @@ export class ProcessingService {
         await this.helpers.deleteFolderContents(`${classId}/uploads/`);
         await this.helpers.deleteFolderContents(`${classId}/processed/`);
         this.logger.log('Cleanup successful.');
-    } catch (error) {
+    } catch (error: any) {
         this.logger.warn(`Cleanup failed (non-critical): ${error.message}`);
     }
 
@@ -122,7 +122,7 @@ export class ProcessingService {
       this.logger.log(`<< Success: ${baseName}`);
       return { status: 'success', baseName };
 
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`!! Failed: ${baseName}: ${error.message}`);
       return { status: 'error', baseName, error: error.message };
     }
@@ -230,27 +230,24 @@ export class ProcessingService {
       const match = trimmed.match(/^(\d+)\.\s+(.*)/); 
 
       if (match) {
-        const foundNumber = parseInt(match[1], 10);
-        const topicTitle = match[2]; 
+        const foundNumber = parseInt(match[1]!, 10);
+        const topicTitle = match[2]!;
         const isSequenceReset = foundNumber < currentTopicNumber;
         const isNextTopic = foundNumber === currentTopicNumber + 1;
 
         if (isSequenceReset || (isInsideLiterature && !isNextTopic)) {
             currentContent.push(line.replace('.', ')'));
-            continue; 
+            continue;
         }
 
-        if (currentTopicString) topics.push({ 
-            number: currentTopicString, 
-            content: currentContent.join('\n'), 
+        if (currentTopicString) topics.push({
+            number: currentTopicString,
+            content: currentContent.join('\n'),
             name: currentTopicName
         });
 
         currentTopicNumber = foundNumber;
-        currentTopicString = match[1];
-        currentTopicName = topicTitle;
-        currentContent = [trimmed]; 
-        isInsideLiterature = literatureKeywords.some(keyword => topicTitle.toLowerCase().includes(keyword));
+        currentTopicString = match[1]!;
 
       } else {
         if (currentTopicString) currentContent.push(line);

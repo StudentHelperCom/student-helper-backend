@@ -75,7 +75,7 @@ export class CdnController {
       try {
         const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
         return response.data;
-      } catch (error) {
+      } catch (error: any) {
         throw new BadRequestException(error.response?.data?.message || 'Failed to create class');
       }
   }
@@ -120,7 +120,7 @@ export class CdnController {
     try {
       const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Upload failed: ${error.message}`);
       throw new BadRequestException(error.response?.data?.message || 'Upload failed');
     }
@@ -136,7 +136,7 @@ export class CdnController {
     try {
       const response = await firstValueFrom(this.httpService.get(cdnUrl));
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Failed to fetch classes: ${error.message}`);
       throw new BadRequestException(error.response?.data?.message || 'Failed to fetch classes');
     }
@@ -154,7 +154,7 @@ export class CdnController {
         this.httpService.get(cdnUrl)
       );
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       if (error.response?.status === 403) {
           throw new ForbiddenException(error.response.data.message);
       }
@@ -207,7 +207,7 @@ export class ProcessingController {
         })
       );
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       throw new BadRequestException(error.response?.data?.message || 'Processing failed');
     }
   }
@@ -238,7 +238,7 @@ export class ProcessingController {
         })
       );
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       throw new BadRequestException(error.response?.data?.message || 'Merge failed');
     }
   }
@@ -269,7 +269,7 @@ export class ProcessingController {
         })
       );
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       throw new BadRequestException(error.response?.data?.message || 'Split failed');
     }
   }
@@ -336,7 +336,7 @@ export class QuizController {
       );
       return response.data;
 
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Quiz generation failed: ${error.message}`);
       throw new BadRequestException(error.response?.data?.message || 'Failed to generate quiz');
     }
@@ -378,7 +378,7 @@ export class AuthController {
         }),
       );
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Full error details:', {
         message: error.message,
         response: error.response?.data,
@@ -410,7 +410,7 @@ export class AuthController {
         }),
       );
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
         console.error('Login error:', error.response?.data || error.message);
         throw new BadRequestException('Failed to log in');
       }

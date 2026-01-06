@@ -2,17 +2,22 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { PassportModule } from '@nestjs/passport';
-import { JwtStrategy } from './jwt/jwt.strategy';
-import { CdnController, AuthController, ProcessingController, HealthController, QuizController } from './gateway.controller';
-import { configValidationSchema } from './config-validation.schema';
-
+import { JwtStrategy } from './jwt/jwt.strategy.js';
+import {
+  CdnController,
+  AuthController,
+  ProcessingController,
+  HealthController,
+  QuizController,
+} from './gateway.controller.js';
+import { configValidationSchema } from '@repo/common';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ 
+    ConfigModule.forRoot({
       isGlobal: true,
-      validationSchema: configValidationSchema, // Add validation
-      envFilePath: '.env', // Use ../../.env if file is in root
+      validationSchema: configValidationSchema,
+      envFilePath: '.env',
     }),
     HttpModule.registerAsync({
       useFactory: () => ({
@@ -20,9 +25,15 @@ import { configValidationSchema } from './config-validation.schema';
         maxRedirects: 5,
       }),
     }),
-    PassportModule
+    PassportModule,
   ],
-  controllers: [CdnController, AuthController, ProcessingController, HealthController, QuizController],
-  providers: [JwtStrategy], 
+  controllers: [
+    CdnController,
+    AuthController,
+    ProcessingController,
+    HealthController,
+    QuizController,
+  ],
+  providers: [JwtStrategy],
 })
 export class AppModule {}

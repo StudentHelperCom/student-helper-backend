@@ -89,7 +89,7 @@ export class ProcessingHelpers {
         }
         continuationToken = listRes.NextContinuationToken;
       } while (continuationToken);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Failed to cleanup folder ${prefix}: ${error.message}`);
     }
   }
@@ -111,7 +111,7 @@ export class ProcessingHelpers {
     for (let i = 0; i < attempts; i++) {
         try {
             return await this.getFile(key);
-        } catch (error) {
+        } catch (error: any) {
             this.logger.warn(`Attempt ${i + 1} failed for ${key}: ${error.message}`);
             if (i === attempts - 1) throw error;
             await sleep(1000 * (i + 1)); // Backoff: 1s, 2s, 3s

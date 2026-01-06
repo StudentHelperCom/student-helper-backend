@@ -4,7 +4,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
-import { pdf } from 'pdf-to-img';
+// Note: pdf-to-img is imported dynamically below due to ESM/top-level await issues
 import { InjectRepository } from '@nestjs/typeorm'; 
 import { Repository } from 'typeorm';                 
 import { Class, Topic } from '@repo/database';
@@ -140,11 +140,13 @@ export class CdnService implements OnModuleInit {
         const pdfExtraction = require('pdf-extraction');
         const data = await pdfExtraction(pdfBuffer);
         text = data.text.trim();
-      } catch (e) {
+      } catch (e: any) {
         this.logger.warn(`Standard extraction failed: ${e.message}`);
       }
 
       if (!text || text.length < 50) {
+        // Dynamic import for pdf-to-img due to ESM/top-level await
+        const { pdf } = await import('pdf-to-img');
         const worker = await createWorker('eng+pol');
         const document = await pdf(pdfPath, { scale: 2.0 }); 
         for await (const image of document) {
@@ -234,7 +236,7 @@ export class CdnService implements OnModuleInit {
       return saved;
 
 
-    } catch (error) {
+    } catch (error: any) {
 
       this.logger.error(`Error creating class: ${error.message}`);
 
