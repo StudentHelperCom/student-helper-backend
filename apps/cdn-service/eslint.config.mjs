@@ -1,2 +1,2 @@
-import { nestConfig } from '@repo/eslint-config/nest';
+import { nestConfig } from '@repo/config/eslint-config/nest';
 export default nestConfig;
