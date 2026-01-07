@@ -9,6 +9,6 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "src/auth.module.ts"],
   "exclude": ["node_modules", "dist", "test"]
 }

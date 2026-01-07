@@ -1,4 +1,5 @@
 import { bootstrap } from '@repo/common';
-import { AppModule } from './app.module.js';
+import { AuthModule } from './auth.module';
 
-bootstrap(AppModule, 'Auth Microservice');
+
+bootstrap(AuthModule, 'Auth Microservice');
