@@ -231,7 +231,7 @@ export class ProcessingService {
 
       if (match) {
         const foundNumber = parseInt(match[1]!, 10);
-        const topicTitle = match[2]!;
+        const topicTitle = match[2]!.trim();
         const isSequenceReset = foundNumber < currentTopicNumber;
         const isNextTopic = foundNumber === currentTopicNumber + 1;
 
@@ -240,14 +240,19 @@ export class ProcessingService {
             continue;
         }
 
-        if (currentTopicString) topics.push({
+        if (currentTopicString) {
+          topics.push({
             number: currentTopicString,
             content: currentContent.join('\n'),
-            name: currentTopicName
-        });
+            name: currentTopicName || `Topic ${currentTopicString}`
+          });
+        }
 
         currentTopicNumber = foundNumber;
         currentTopicString = match[1]!;
+        currentTopicName = topicTitle;
+        currentContent = [];
+
 
       } else {
         if (currentTopicString) currentContent.push(line);
@@ -265,6 +270,9 @@ export class ProcessingService {
 
     const generatedFiles: string[] = [];
     const topicEntities: Topic[] = [];
+
+    this.logger.log(`Cleaning up old topics for class ${classId}...`);
+    await this.topicsRepository.delete({ class: { classID: classId } as any });
 
     // Parallel upload of split files
     const uploadPromises = topics.map(async (topic) => {

@@ -100,7 +100,8 @@ RULES:
 - Don't modify the content of topics, just remove duplicates
 - Renumber everything sequentially
 - Maintain the same plain text format
-- Keep all image descriptions and important details, and all information, text should be the same`
+- Keep all image descriptions and important details, and all information, text should be the same
+- Dont write sentences like Oto połączona i zdeduplikowana treść:, just the information i need`
               }
             ]
           }
@@ -174,7 +175,8 @@ RULES:
   - Don't skip any important information, dont add something new, just group everything where it needs
   - Keep the original meaning but organize it logically
   - If there is no images dont write "There are no images or diagrams present in the provided PDF content to describe."
-  - There is no need to include ** near the topics and other words. Dont use bold text or something instead of standart text.Please answer in plain paragraphs, do not use bullet points or numbered lists`
+  - There is no need to include ** near the topics and other words. Dont use bold text or something instead of standart text.Please answer in plain paragraphs, do not use bullet points or numbered lists
+  - Dont write sentences like Oto połączona i zdeduplikowana treść:, just the information i need`
               },
               {
                 inlineData: {

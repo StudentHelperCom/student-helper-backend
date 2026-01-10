@@ -24,7 +24,7 @@ COPY --from=pruner /app/out/full/ .
 COPY --from=pruner /app/tsconfig.base.json ./tsconfig.base.json
 COPY --from=pruner /app/turbo.json ./turbo.json
 # Copy typescript-config package manually (not included by turbo prune)
-COPY --from=pruner /app/packages/typescript-config ./packages/typescript-config
+COPY --from=pruner /app/packages/config/typescript-config ./packages/config/typescript-config
 RUN npx turbo run build --filter=api-gateway...
 
 # Install production dependencies only

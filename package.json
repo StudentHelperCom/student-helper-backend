@@ -31,5 +31,8 @@
     "apps/*",
     "packages/*",
     "packages/config/*"
-  ]
+  ],
+  "dependencies": {
+    "pdf-extraction": "^1.0.2"
+  }
 }
