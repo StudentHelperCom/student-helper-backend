@@ -18,7 +18,7 @@ out/
 temp_processing/
 upload/
 public/
-student_helper_db_frxm.session.sql
+student_helper_db_p6j7.session.sql
 
 # Logs
 npm-debug.log*
@@ -31,5 +31,3 @@ logs/
 .idea/
 .DS_Store
 
-# DB
-student_helper_db_p6j7.session.sql
