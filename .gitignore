@@ -31,3 +31,5 @@ logs/
 .idea/
 .DS_Store
 
+# DB
+student_helper_db_p6j7.session.sql
