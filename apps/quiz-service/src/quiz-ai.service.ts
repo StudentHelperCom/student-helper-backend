@@ -18,7 +18,9 @@ export class QuizAiService {
     ${content.substring(0, 30000)}
 
     TASK:
-    1. Create 5-10 questions to test understanding of the text.
+    1. Analyze the volume of the provided text: 
+      if the content is short, generate 3-5 questions per topic; 
+      if the content is extensive, generate 5-8 questions per topic to ensure full coverage.
     2. Each question must have a unique numeric ID.
     3. Each question must have an 'answers' array.
     4. Each answer must have 'text' and 'is_correct' boolean.
@@ -55,7 +57,9 @@ export class QuizAiService {
     ${content.substring(0, 30000)}
 
     TASK:
-    1. Create 10-15 flashcards extracting key terms, definitions, or concepts.
+    1. Analyze the volume of the provided text: 
+      if the content is short, generate 5-8 questions per topic; 
+      if the content is extensive, generate 8-12 questions per topic to ensure full coverage.
     2. 'question' is the front of the card (term/concept).
     3. 'answer' is the back of the card (definition/explanation).
     4. Each card must have a unique numeric ID.
@@ -83,8 +87,6 @@ export class QuizAiService {
 
   async generateOpenQuestions(content: string, fileCount: number): Promise<any> {
     this.logger.log(`Generating open questions for ${fileCount} files...`);
-
-    // Logic: if files < 3, 8 questions each. Else 5 questions each.
     const questionsPerFile = fileCount < 3 ? 8 : 5;
 
     const prompt = `
@@ -94,11 +96,12 @@ export class QuizAiService {
     ${content.substring(0, 30000)}
 
     TASK:
-    1. The content consists of ${fileCount} distinct topics/files (marked by headers).
-    2. Generate exactly ${questionsPerFile} open-ended questions FOR EACH file/topic found in the text.
-    3. The questions should test deep understanding, not just keywords.
-    4. Each question must have a unique numeric ID.
-    5. All content must be in Polish.
+    1. Analyze the volume of the provided text: 
+      if the content is short, generate 3-5 questions per topic; 
+      if the content is extensive, generate 5-8 questions per topic to ensure full coverage.
+    2. The questions should test deep understanding, not just keywords.
+    3. Each question must have a unique numeric ID.
+    4. All content must be in Polish.
 
     REQUIRED JSON FORMAT (Strict JSON, no markdown):
     {
@@ -160,6 +163,32 @@ export class QuizAiService {
     return this.callGeminiModel(prompt);
   }
 
+async generateStudySummary(content: string, fileCount: number): Promise<any> {
+    this.logger.log(`Generating block-based summary for ${fileCount} topics...`);
+
+    const prompt = `
+    You are an expert educational content formatter.
+    Summarize the provided text into a structured list of content blocks.
+
+    RAW CONTENT:
+    ${content.substring(0, 40000)}
+
+    TASK:
+    1. Organize the text logically into sections using headings.
+    2. Use "list" blocks for enumerations.
+    3. All content must be in Polish.
+
+    REQUIRED JSON FORMAT (Strict JSON Array of Objects):
+    [
+      { "type": "heading", "value": "Title" },
+      { "type": "text", "value": "Paragraph text..." },
+      { "type": "list", "items": ["Item 1", "Item 2"] }
+    ]
+    `;
+
+    return this.callGeminiModel(prompt);
+  }
+
   private async callGeminiModel(prompt: string): Promise<any> {
     try {
       const response = await axios.post(
@@ -174,7 +203,7 @@ export class QuizAiService {
         { headers: { 'Content-Type': 'application/json' } }
       );
 
-      const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
       return this.cleanAndParseJson(rawText);
 
     } catch (error: any) {
@@ -187,18 +216,22 @@ export class QuizAiService {
     try {
       const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleaned);
-      
-      // Basic heuristics to return the right shape
-      if (parsed.questions) return { questions: parsed.questions };
-      if (parsed.flashcards) return { flashcards: parsed.flashcards };
-      if (parsed.results) return { results: parsed.results };
-      
-      // Fallback for arrays
+
+      if (parsed.summary) return { summary: parsed.summary };
+
       if (Array.isArray(parsed)) {
+          if (parsed.length > 0 && parsed[0].type) {
+             return { summary: parsed }; 
+          }
           if (parsed.length > 0 && parsed[0].answers) return { questions: parsed };
           if (parsed.length > 0 && parsed[0].answer && !parsed[0].answers) return { flashcards: parsed };
           if (parsed.length > 0 && parsed[0].user_answer) return { results: parsed };
       }
+
+      if (parsed.questions) return { questions: parsed.questions };
+      if (parsed.flashcards) return { flashcards: parsed.flashcards };
+      if (parsed.results) return { results: parsed.results };
+
       return parsed;
     } catch (e) {
       this.logger.error('JSON Parsing Error. Raw text:', text);

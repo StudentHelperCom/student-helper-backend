@@ -82,6 +82,16 @@ export class QuizService {
     throw new BadRequestException(`Mode ${mode} is not supported yet.`);
   }
 
+  async generateSummary(topicIds: string[]) {
+    const { content, count } = await this.fetchCombinedContent(topicIds);
+    const summaryJson = await this.ai.generateStudySummary(content, count);
+    
+    return {
+      mode: 'summary',
+      summary: summaryJson.summary
+    };
+  }
+
   async evaluateQuiz(topicIds: string[], answers: any[]) {
     const { content } = await this.fetchCombinedContent(topicIds);
     const evaluationJson = await this.ai.evaluateOpenAnswers(content, answers);

@@ -398,6 +398,46 @@ export class QuizController {
       throw new BadRequestException(error.response?.data?.message || 'Failed to evaluate quiz');
     }
   }
+
+  @Post('summarize')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Generate AI-structured summary for selected topics' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['topicIds'],
+      properties: {
+        topicIds: { 
+          type: 'array', 
+          items: { type: 'string' },
+          description: 'Array of Topic UUIDs to summarize'
+        }
+      }
+    }
+  })
+  async summarizeTopics(@Body() body: { topicIds: string[] }, @Req() req) {
+    if (!body.topicIds || body.topicIds.length === 0) {
+      throw new BadRequestException('At least one topicId is required');
+    }
+
+    const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/summarize`;
+
+    try {
+      this.logger.log(`Requesting summary for ${body.topicIds.length} topics`);
+      
+      const response = await firstValueFrom(
+        this.httpService.post(quizServiceUrl, { topicIds: body.topicIds }, {
+          timeout: 60000, // 60s timeout for AI generation
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+      return response.data;
+
+    } catch (error: any) {
+      this.logger.error(`Summary generation failed: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Failed to generate summary');
+    }
+  }
 }
 
 // =========================================================================

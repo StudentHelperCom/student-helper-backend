@@ -24,4 +24,10 @@ export class QuizController {
   async evaluate(@Body() body: { topicIds: string[], answers: any[] }) {
     return this.quizService.evaluateQuiz(body.topicIds, body.answers);
   }
+
+  @Post('summarize')
+  @ApiOperation({ summary: 'Generate structured summary for chosen topics' })
+  async summarize(@Body() body: { topicIds: string[] }) {
+    return this.quizService.generateSummary(body.topicIds);
+  }
 }
