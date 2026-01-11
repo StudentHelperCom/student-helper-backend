@@ -79,6 +79,13 @@ export class QuizService {
       return { mode: 'expanded', questions: expandedJson.questions };
     }
 
+    // === EXPANDED QUESTIONS LOGIC ===
+    // Use the Enum to match 'Summary' exactly
+    if (mode === 'Summary' || mode === 'SUMMARY') {
+        const summaryJson = await this.ai.generateStudySummary(content, count);
+        return { mode: 'summary', summary: summaryJson.summary };
+    }
+
     throw new BadRequestException(`Mode ${mode} is not supported yet.`);
   }
 

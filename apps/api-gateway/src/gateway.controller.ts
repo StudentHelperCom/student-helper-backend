@@ -292,7 +292,7 @@ export class QuizController {
 
   @Post('generate')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Generate quiz questions based on selected topics' })
+  @ApiOperation({ summary: 'Generate study content based on mode' })
   @ApiBody({
     schema: {
       type: 'object',
@@ -300,15 +300,15 @@ export class QuizController {
       properties: {
         mode: { 
           type: 'string', 
-          enum: ['Quiz', 'Expanded', 'Cards', 'Study'], 
+          enum: ['Quiz', 'Expanded', 'Cards', 'Summary'], 
           example: 'Quiz',
-          description: 'Study mode'
+          description: 'Type of content to generate'
         },
         topicIds: { 
           type: 'array', 
           items: { type: 'string' },
           example: ['uuid-topic-1', 'uuid-topic-2'],
-          description: 'Array of Topic UUIDs from the database'
+          description: 'Array of Topic UUIDs'
         }
       }
     }
@@ -326,19 +326,19 @@ export class QuizController {
     };
 
     try {
-      this.logger.log(`Requesting quiz generation [Mode: ${body.mode}] for ${body.topicIds.length} topics`);
+      this.logger.log(`Requesting generation [Mode: ${body.mode}]`);
       
       const response = await firstValueFrom(
         this.httpService.post(quizServiceUrl, payload, {
-          timeout: 60000, // 60s timeout for AI generation
+          timeout: 60000, 
           headers: { 'Content-Type': 'application/json' }
         })
       );
       return response.data;
 
     } catch (error: any) {
-      this.logger.error(`Quiz generation failed: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Failed to generate quiz');
+      this.logger.error(`Generation failed: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Failed to generate content');
     }
   }
 
@@ -398,47 +398,8 @@ export class QuizController {
       throw new BadRequestException(error.response?.data?.message || 'Failed to evaluate quiz');
     }
   }
-
-  @Post('summarize')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Generate AI-structured summary for selected topics' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['topicIds'],
-      properties: {
-        topicIds: { 
-          type: 'array', 
-          items: { type: 'string' },
-          description: 'Array of Topic UUIDs to summarize'
-        }
-      }
-    }
-  })
-  async summarizeTopics(@Body() body: { topicIds: string[] }, @Req() req) {
-    if (!body.topicIds || body.topicIds.length === 0) {
-      throw new BadRequestException('At least one topicId is required');
-    }
-
-    const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/summarize`;
-
-    try {
-      this.logger.log(`Requesting summary for ${body.topicIds.length} topics`);
-      
-      const response = await firstValueFrom(
-        this.httpService.post(quizServiceUrl, { topicIds: body.topicIds }, {
-          timeout: 60000, // 60s timeout for AI generation
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-      return response.data;
-
-    } catch (error: any) {
-      this.logger.error(`Summary generation failed: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Failed to generate summary');
-    }
-  }
 }
+
 
 // =========================================================================
 // === AUTH CONTROLLER ===

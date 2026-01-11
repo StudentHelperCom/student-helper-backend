@@ -5,7 +5,7 @@ export enum StudyMode {
   QUIZ = 'Quiz',
   CARDS = 'Cards',
   EXPANDED = 'Expanded',
-  STUDY = 'Study'
+  SUMMARY = 'Summary'
 }
 
 export class CreateQuizDto {

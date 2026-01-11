@@ -14,7 +14,7 @@ export class QuizController {
   }
 
   @Post('generate')
-  @ApiOperation({ summary: 'Generate Quiz for chosen topics' })
+  @ApiOperation({ summary: 'Generate content (Quiz, Cards, Expanded, Summary)' })
   async generate(@Body() dto: CreateQuizDto) {
     return this.quizService.generateQuiz(dto.mode, dto.topicIds);
   }
@@ -23,11 +23,5 @@ export class QuizController {
   @ApiOperation({ summary: 'Evaluate expanded answers' })
   async evaluate(@Body() body: { topicIds: string[], answers: any[] }) {
     return this.quizService.evaluateQuiz(body.topicIds, body.answers);
-  }
-
-  @Post('summarize')
-  @ApiOperation({ summary: 'Generate structured summary for chosen topics' })
-  async summarize(@Body() body: { topicIds: string[] }) {
-    return this.quizService.generateSummary(body.topicIds);
   }
 }
