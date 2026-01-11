@@ -18,4 +18,10 @@ export class QuizController {
   async generate(@Body() dto: CreateQuizDto) {
     return this.quizService.generateQuiz(dto.mode, dto.topicIds);
   }
+
+  @Post('evaluate')
+  @ApiOperation({ summary: 'Evaluate expanded answers' })
+  async evaluate(@Body() body: { topicIds: string[], answers: any[] }) {
+    return this.quizService.evaluateQuiz(body.topicIds, body.answers);
+  }
 }

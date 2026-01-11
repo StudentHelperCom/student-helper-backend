@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { QuizController } from './quiz.controller.js';
 import { QuizService } from './quiz.service.js';
 import { User, Class, Topic, SharedDatabaseModule } from '@repo/database';
-import { configValidationSchema } from '@repo/common';
+import { quizConfigSchema } from '@repo/common';
 import { QuizAiService } from './quiz-ai.service.js';
 import { QuizLogicService } from './quiz-logic.service.js';
 
@@ -12,7 +12,7 @@ import { QuizLogicService } from './quiz-logic.service.js';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      validationSchema: configValidationSchema,
+      validationSchema: quizConfigSchema,
       envFilePath: '.env',
     }),
     SharedDatabaseModule.forRoot(),

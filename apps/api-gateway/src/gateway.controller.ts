@@ -276,7 +276,7 @@ export class ProcessingController {
 }
 
 // =========================================================================
-// === QUIZ CONTROLLER (NEW) ===
+// === QUIZ CONTROLLER (UPDATED) ===
 // =========================================================================
 @ApiTags('Quiz')
 @ApiBearerAuth()
@@ -339,6 +339,63 @@ export class QuizController {
     } catch (error: any) {
       this.logger.error(`Quiz generation failed: ${error.message}`);
       throw new BadRequestException(error.response?.data?.message || 'Failed to generate quiz');
+    }
+  }
+
+  // === NEW ENDPOINT: Evaluate Expanded Questions ===
+  @Post('evaluate')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Evaluate open-ended answers via AI' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['topicIds', 'answers'],
+      properties: {
+        topicIds: { 
+          type: 'array', 
+          items: { type: 'string' },
+          example: ['uuid-topic-1']
+        },
+        answers: { 
+          type: 'array',
+          description: 'List of user answers to evaluate',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'number' },
+              question: { type: 'string' },
+              answer: { type: 'string' }
+            }
+          }
+        }
+      }
+    }
+  })
+  async evaluateQuiz(@Body() body: { topicIds: string[]; answers: any[] }, @Req() req) {
+    if (!body.topicIds || body.topicIds.length === 0) {
+      throw new BadRequestException('At least one topicId is required');
+    }
+    if (!body.answers || body.answers.length === 0) {
+        throw new BadRequestException('Answers are required for evaluation');
+    }
+
+    // Forward to Quiz Service
+    const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/evaluate`;
+
+    try {
+      this.logger.log(`Requesting evaluation for ${body.topicIds.length} topics`);
+      
+      const response = await firstValueFrom(
+        this.httpService.post(quizServiceUrl, body, {
+          timeout: 60000, // 60s timeout for AI evaluation
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+      return response.data;
+
+    } catch (error: any) {
+      this.logger.error(`Quiz evaluation failed: ${error.message}`);
+      throw new BadRequestException(error.response?.data?.message || 'Failed to evaluate quiz');
     }
   }
 }

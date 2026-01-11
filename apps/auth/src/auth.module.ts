@@ -4,7 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UsersModule } from './users/users.module';
 import { HashService } from './common/hash.service';
 import { SharedDatabaseModule } from '@repo/database';
-import { configValidationSchema } from '@repo/common';
+import { authConfigSchema } from '@repo/common';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
@@ -12,7 +12,7 @@ import { AuthService } from './auth.service';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      validationSchema: configValidationSchema,
+      validationSchema: authConfigSchema,
       envFilePath: '.env',
     }),
     SharedDatabaseModule.forRoot(),
@@ -21,7 +21,7 @@ import { AuthService } from './auth.service';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('AUTH_JWT_SECRET'),
+        secret: configService.get<string>('JWT_SECRET'),
         signOptions: { expiresIn: '10y' },
       }),
     }),

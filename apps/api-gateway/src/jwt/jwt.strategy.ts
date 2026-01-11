@@ -6,7 +6,7 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(configService: ConfigService) {
-    const secret = process.env.GATEWAY_JWT_SECRET!;
+    const secret = process.env.JWT_SECRET!;
     if (!secret) {
       throw new Error('JWT secret is not configured. Set JWT_SECRET in config or AUTH_ACCESS_TOKEN_SECRET in environment.');
     }

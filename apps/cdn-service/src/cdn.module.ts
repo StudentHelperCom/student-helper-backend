@@ -5,7 +5,7 @@ import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Class, User, Topic, SharedDatabaseModule } from '@repo/database';
-import { configValidationSchema } from '@repo/common';
+import { cdnConfigSchema } from '@repo/common';
 
 @Module({
   controllers: [CdnController],
@@ -14,7 +14,7 @@ import { configValidationSchema } from '@repo/common';
     HttpModule,
     ConfigModule.forRoot({
       isGlobal: true,
-      validationSchema: configValidationSchema,
+      validationSchema: cdnConfigSchema,
       envFilePath: '.env',
     }),
     SharedDatabaseModule.forRoot(),

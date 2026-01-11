@@ -10,13 +10,13 @@ import {
   HealthController,
   QuizController,
 } from './gateway.controller.js';
-import { configValidationSchema } from '@repo/common';
+import { gatewayConfigSchema } from '@repo/common';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      validationSchema: configValidationSchema,
+      validationSchema: gatewayConfigSchema,
       envFilePath: '.env',
     }),
     HttpModule.registerAsync({
