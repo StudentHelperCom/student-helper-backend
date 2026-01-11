@@ -22,6 +22,9 @@ export class Class {
   
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
+
+  @Column()
+  userID: string;
   
   @ManyToOne(() => User, (user) => user.classes, { onDelete: 'CASCADE', nullable: false })
   @JoinColumn({ name: 'userID' })

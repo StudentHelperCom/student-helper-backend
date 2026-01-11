@@ -21,7 +21,6 @@ export class User {
   @Column({ type: 'timestamptz', nullable: true })
   lastActivityDate: Date;
 
-  // Relationship: One User has Many Classes
   @OneToMany(() => Class, (cls) => cls.user)
   classes: Class[];
 }

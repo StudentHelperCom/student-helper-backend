@@ -18,7 +18,9 @@ export class Topic {
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 
-  // Use a string for the target name to avoid the 'Class' ReferenceError
+  @Column()
+  classID: string;
+
   @ManyToOne('Class', 'topics', { onDelete: 'CASCADE', nullable: false })
   @JoinColumn({ name: 'classID' })
   class: Class;
