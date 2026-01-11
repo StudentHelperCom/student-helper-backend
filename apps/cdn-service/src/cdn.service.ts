@@ -187,7 +187,6 @@ export class CdnService implements OnModuleInit {
   }
 
   private async uploadToS3(key: string, content: Buffer) {
-    // Bucket is now guaranteed to be defined via ConfigService
     await this.s3.send(new PutObjectCommand({ 
         Bucket: this.bucket, 
         Key: key, 
@@ -199,21 +198,16 @@ export class CdnService implements OnModuleInit {
     return `https://${this.bucket}.s3.${this.configService.get<string>('AWS_REGION')}.amazonaws.com/${key}`;
   }
 
-   async createClass(data: CreateClassDto) {
-
-    this.logger.log(`Service creating class for User: ${data.userId}, Name: ${data.className}`);
-
-   
-
+   async createClass(userId: string, data: CreateClassDto) {
+    this.logger.log(`Service creating class for User: ${userId}, Name: ${data.className}`);
     try {
-      // Querying using the new userID relation field
       let classEntity = await this.classesRepository.findOne({
-          where: { user: { userID: data.userId }, name: data.className }
+          where: { user: { userID: userId }, name: data.className }
       });
       if (!classEntity) {
           this.logger.log('Class not found. Creating new...');
           classEntity = this.classesRepository.create({
-              user: { userID: data.userId } as any,
+              user: { userID: userId } as any, // Use the explicit userId
               name: data.className,
               examDate: data.examDate ? new Date(data.examDate) : undefined,
               examLocation: data.examLocation
@@ -223,26 +217,19 @@ export class CdnService implements OnModuleInit {
           if (data.examDate) classEntity.examDate = new Date(data.examDate);
           if (data.examLocation) classEntity.examLocation = data.examLocation;
       }
+
       const saved = await this.classesRepository.save(classEntity);
       this.logger.log(`Class saved successfully. ID: ${saved.classID}`);
 
       const folderKey = `${saved.classID}/`;
-
       await this.uploadToS3(folderKey, Buffer.from(''));
-
-     
-
       return saved;
-
-
+      
     } catch (error: any) {
-
       this.logger.error(`Error creating class: ${error.message}`);
-
       throw new BadRequestException('Failed to create or update class');
-
     }
-  } 
+  }
 
    async getClassesForUser(userId: string) {
     return await this.classesRepository.find({
@@ -250,31 +237,17 @@ export class CdnService implements OnModuleInit {
       order: { createdAt: 'DESC' }
     });
   } 
-
-     async getTopicsForClass(classId: string, userId: string) {
-
-    const classEntity = await this.classesRepository.findOne({
-
+    async getTopicsForClass(classId: string, userId: string) {
+      const classEntity = await this.classesRepository.findOne({
         where: { classID: classId },
-
         relations: ['user']
-
     });
 
-
     if (!classEntity) {
-
-        throw new BadRequestException('Class not found');
-
+      throw new BadRequestException('Class not found');
     }
-
-
-    // Security Check: Verify class ownership
-
     if (classEntity.user.userID !== userId) {
-
         throw new ForbiddenException('You do not have permission to view this class.');
-
     }
 
     return this.topicsRepository.find({

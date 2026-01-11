@@ -6,12 +6,7 @@ export class CreateClassDto {
   @IsString()
   @IsNotEmpty()
   className!: string;
-
-  @ApiProperty({ example: 'user-uuid-123' })
-  @IsString()
-  @IsNotEmpty()
-  userId!: string;
-
+  
   @ApiProperty({ example: '2025-06-15T09:00:00Z', required: false })
   @IsOptional()
   @IsDateString()

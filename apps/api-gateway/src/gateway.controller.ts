@@ -51,15 +51,16 @@ export class CdnController {
   async createClass(@Body() body: CreateClassDto, @Req() req) {
       const user = req.user;
       const cdnUrl = `${process.env.CDN_URL!}/cdn/create-class`;
+
       const response = await firstValueFrom(
         this.httpService.post(cdnUrl, {
-          ...body,
-          userId: user.userId
+          ...body,             
+          userId: user.userId, 
         })
       );
       return response.data;
   }
-
+  
   @Post('upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files', 10))

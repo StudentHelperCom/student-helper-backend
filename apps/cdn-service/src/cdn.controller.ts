@@ -72,10 +72,10 @@ export class CdnController {
 
   @Post('create-class')
   @ApiOperation({ summary: 'Create or Update a class' })
-  async createClass(@Body() body: CreateClassDto) {
-      this.logger.log(`Received CreateClass Request: ${JSON.stringify(body)}`); 
-      
-      return this.cdnService.createClass(body);
+  async createClass(@Body() body: CreateClassDto & { userId: string }) {
+      const { userId, ...dto } = body;
+      this.logger.log(`Received CreateClass Request for User: ${userId}`); 
+      return this.cdnService.createClass(userId, dto as CreateClassDto);
   }
 
   @Get('user/:userId')
