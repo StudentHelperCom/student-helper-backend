@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger, ForbiddenException, OnModuleInit } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, ForbiddenException, OnModuleInit, ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { promises as fs } from 'fs';
 import * as path from 'path';
@@ -200,34 +200,37 @@ export class CdnService implements OnModuleInit {
 
    async createClass(userId: string, data: CreateClassDto) {
     this.logger.log(`Service creating class for User: ${userId}, Name: ${data.className}`);
+
     try {
-      let classEntity = await this.classesRepository.findOne({
+      const existingClass = await this.classesRepository.findOne({
           where: { user: { userID: userId }, name: data.className }
       });
-      if (!classEntity) {
-          this.logger.log('Class not found. Creating new...');
-          classEntity = this.classesRepository.create({
-              user: { userID: userId } as any, // Use the explicit userId
-              name: data.className,
-              examDate: data.examDate ? new Date(data.examDate) : undefined,
-              examLocation: data.examLocation
-          });
-      } else {
-          this.logger.log(`Class found (ID: ${classEntity.classID}). Updating metadata...`);
-          if (data.examDate) classEntity.examDate = new Date(data.examDate);
-          if (data.examLocation) classEntity.examLocation = data.examLocation;
+
+      if (existingClass) {
+          this.logger.warn(`Class creation failed: Class '${data.className}' already exists`);
+          throw new ConflictException('Class with this name already exists');
       }
+      this.logger.log('Class not found. Creating new...');
+      const newClass = this.classesRepository.create({
+          user: { userID: userId } as any,
+          name: data.className,
+          examDate: data.examDate ? new Date(data.examDate) : undefined,
+          examLocation: data.examLocation
+      });
 
-      const saved = await this.classesRepository.save(classEntity);
+      const saved = await this.classesRepository.save(newClass);
       this.logger.log(`Class saved successfully. ID: ${saved.classID}`);
-
       const folderKey = `${saved.classID}/`;
       await this.uploadToS3(folderKey, Buffer.from(''));
+
       return saved;
-      
+
     } catch (error: any) {
+      if (error instanceof ConflictException) {
+          throw error;
+      }
       this.logger.error(`Error creating class: ${error.message}`);
-      throw new BadRequestException('Failed to create or update class');
+      throw new BadRequestException('Failed to create class');
     }
   }
 
