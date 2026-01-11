@@ -2,7 +2,6 @@ import {
   Controller, 
   Post, 
   UseInterceptors,
-  BadRequestException, 
   Body,
   UploadedFiles,
   UseGuards,
@@ -10,14 +9,13 @@ import {
   Logger,   
   Get,
   Param,
-  ForbiddenException
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger'; 
-import { JwtAuthGuard } from './jwt/jwt-auth.guard';
-import { AuthDto } from '@repo/common';
+import { JwtAuthGuard } from './common/jwt-auth.guard';
+import { AuthDto, CreateClassDto } from '@repo/common';
 
 // =========================================================================
 // === HEALTHCHECK ===
@@ -44,40 +42,23 @@ export class CdnController {
   constructor(private readonly httpService: HttpService) {}
 
   @Get('health')
-  @ApiOperation({ summary: 'Health check' })
   healthCheck() { return 'OK'; }
 
   @Post('create-class')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Create a Class entry in DB' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['className'],
-      properties: {
-        className: { type: 'string', example: 'Mathematics 101' },
-        examDate: { type: 'string', format: 'date-time', example: '2025-06-15T09:00:00' },
-        examLocation: { type: 'string', example: 'Room 304' }
-      }
-    }
-  })
-  async createClass(@Body() body: { className: string; examDate?: string; examLocation?: string }, @Req() req) {
+  async createClass(@Body() body: CreateClassDto, @Req() req) {
       const user = req.user;
       const cdnUrl = `${process.env.CDN_URL!}/cdn/create-class`;
 
-      const payload = {
-          userId: user.userId,
-          className: body.className,
-          examDate: body.examDate,
-          examLocation: body.examLocation
-      };
-
-      try {
-        const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
-        return response.data;
-      } catch (error: any) {
-        throw new BadRequestException(error.response?.data?.message || 'Failed to create class');
-      }
+      // Filter handles errors automatically
+      const response = await firstValueFrom(
+        this.httpService.post(cdnUrl, {
+          ...body,
+          userId: user.userId
+        })
+      );
+      return response.data;
   }
 
   @Post('upload')
@@ -90,11 +71,8 @@ export class CdnController {
       type: 'object',
       required: ['className', 'files'], 
       properties: {
-        className: { type: 'string', description: 'The name of the class' },
-        files: {
-          type: 'array',
-          items: { type: 'string', format: 'binary' },
-        },
+        className: { type: 'string' },
+        files: { type: 'array', items: { type: 'string', format: 'binary' } },
       },
     },
   })
@@ -104,9 +82,7 @@ export class CdnController {
     @Req() req
   ) {
     const user = req.user;
-
-    if (!files || files.length === 0) throw new BadRequestException('No files uploaded');
-    if (!body.className) throw new BadRequestException('Class name is required');
+    const cdnUrl = `${process.env.CDN_URL!}/cdn/upload`;
 
     const payload = files.map(file => ({
       filename: file.originalname,
@@ -115,15 +91,8 @@ export class CdnController {
       className: body.className,
     }));
 
-    const cdnUrl = `${process.env.CDN_URL!}/cdn/upload`;
-
-    try {
-      const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
-      return response.data;
-    } catch (error: any) {
-      this.logger.error(`Upload failed: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Upload failed');
-    }
+    const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
+    return response.data;
   }
 
   @Get('classes')
@@ -133,13 +102,8 @@ export class CdnController {
     const user = req.user;
     const cdnUrl = `${process.env.CDN_URL!}/cdn/user/${user.userId}`;
 
-    try {
-      const response = await firstValueFrom(this.httpService.get(cdnUrl));
-      return response.data;
-    } catch (error: any) {
-      this.logger.error(`Failed to fetch classes: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Failed to fetch classes');
-    }
+    const response = await firstValueFrom(this.httpService.get(cdnUrl));
+    return response.data;
   }
   
   @Get('class/:classId/topics')
@@ -149,20 +113,21 @@ export class CdnController {
     const user = req.user;
     const cdnUrl = `${process.env.CDN_URL!}/cdn/class/${classId}/topics?userId=${user.userId}`;
 
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(cdnUrl)
-      );
-      return response.data;
-    } catch (error: any) {
-      if (error.response?.status === 403) {
-          throw new ForbiddenException(error.response.data.message);
-      }
-      throw new BadRequestException(error.response?.data?.message || 'Failed to fetch topics');
-    }
+    const response = await firstValueFrom(this.httpService.get(cdnUrl));
+    return response.data;
+  }
+
+  @Get('class/:classId/files')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get all source files uploaded for a specific class' })
+  async getClassFiles(@Param('classId') classId: string, @Req() req) {
+    const user = req.user;
+    const cdnUrl = `${process.env.CDN_URL!}/cdn/class/${classId}/files?userId=${user.userId}`;
+
+    const response = await firstValueFrom(this.httpService.get(cdnUrl));
+    return response.data;
   }
 }
-
 
 // =========================================================================
 // === PROCESSING CONTROLLER ===
@@ -176,107 +141,50 @@ export class ProcessingController {
   constructor(private readonly httpService: HttpService) {}
 
   @Get('health')
-  @ApiOperation({ summary: 'Health check' })
   healthCheck() { return 'OK'; }
 
   @Post('run')
   @UseGuards(JwtAuthGuard) 
   @ApiOperation({ summary: 'Manually trigger processing for the chosen class' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['classId'], 
-      properties: {
-        classId: { type: 'string', example: 'uuid-1234-5678', description: 'The UUID of the class returned by upload' }
-      },
-    }
-  })
-  async runProcessing(@Body() body: { classId: string }, @Req() req) {
-    if (!body.classId) throw new BadRequestException('classId is required');
-
+  @ApiBody({ schema: { type: 'object', properties: { classId: { type: 'string' } } } })
+  async runProcessing(@Body() body: { classId: string }) {
     const processingUrl = `${process.env.PROCESSING_URL!}/processing/run`;
     
-    const payload = { classId: body.classId };
-
-    try {
-      this.logger.log(`Requesting batch processing for Class ID [${body.classId}]`);
-      const response = await firstValueFrom(
-        this.httpService.post(processingUrl, payload, {
-          timeout: 600000,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-      return response.data;
-    } catch (error: any) {
-      throw new BadRequestException(error.response?.data?.message || 'Processing failed');
-    }
+    const response = await firstValueFrom(
+      this.httpService.post(processingUrl, { classId: body.classId })
+    );
+    return response.data;
   }
 
   @Post('merge')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Merge PDFs for a Class ID' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['classId'],
-      properties: {
-        classId: { type: 'string', example: 'uuid-1234-5678' }
-      },
-    }
-  })
-  async mergePdfs(@Body() body: { classId: string }, @Req() req) {
-    if (!body.classId) throw new BadRequestException('classId is required');
-
+  @ApiBody({ schema: { type: 'object', properties: { classId: { type: 'string' } } } })
+  async mergePdfs(@Body() body: { classId: string }) {
     const processingUrl = `${process.env.PROCESSING_URL!}/processing/merge`;
-    const payload = { classId: body.classId };
 
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(processingUrl, payload, {
-          timeout: 600000,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-      return response.data;
-    } catch (error: any) {
-      throw new BadRequestException(error.response?.data?.message || 'Merge failed');
-    }
+    const response = await firstValueFrom(
+      this.httpService.post(processingUrl, { classId: body.classId })
+    );
+    return response.data;
   }
 
   @Post('split')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Split merged PDF for a Class ID' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['classId'],
-      properties: {
-        classId: { type: 'string', example: 'uuid-1234-5678' }
-      },
-    }
-  })
-  async splitMergedPdf(@Body() body: { classId: string }, @Req() req) {
-    if (!body.classId) throw new BadRequestException('classId is required');
-
+  @ApiBody({ schema: { type: 'object', properties: { classId: { type: 'string' } } } })
+  async splitMergedPdf(@Body() body: { classId: string }) {
     const processingUrl = `${process.env.PROCESSING_URL!}/processing/split`;
-    const payload = { classId: body.classId };
 
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(processingUrl, payload, {
-          timeout: 600000,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-      return response.data;
-    } catch (error: any) {
-      throw new BadRequestException(error.response?.data?.message || 'Split failed');
-    }
+    const response = await firstValueFrom(
+      this.httpService.post(processingUrl, { classId: body.classId })
+    );
+    return response.data;
   }
 }
 
 // =========================================================================
-// === QUIZ CONTROLLER (UPDATED) ===
+// === QUIZ CONTROLLER ===
 // =========================================================================
 @ApiTags('Quiz')
 @ApiBearerAuth()
@@ -287,12 +195,11 @@ export class QuizController {
   constructor(private readonly httpService: HttpService) {}
 
   @Get('health')
-  @ApiOperation({ summary: 'Health check' })
   healthCheck() { return 'OK'; }
 
   @Post('generate')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Generate study content based on mode' })
+  @ApiOperation({ summary: 'Generate study content (Quiz, Cards, Expanded, Summary)' })
   @ApiBody({
     schema: {
       type: 'object',
@@ -301,105 +208,38 @@ export class QuizController {
         mode: { 
           type: 'string', 
           enum: ['Quiz', 'Expanded', 'Cards', 'Summary'], 
-          example: 'Quiz',
-          description: 'Type of content to generate'
+          example: 'Quiz'
         },
-        topicIds: { 
-          type: 'array', 
-          items: { type: 'string' },
-          example: ['uuid-topic-1', 'uuid-topic-2'],
-          description: 'Array of Topic UUIDs'
-        }
-      }
-    }
-  })
-  async generateQuiz(@Body() body: { mode: string; topicIds: string[] }, @Req() req) {
-    if (!body.topicIds || body.topicIds.length === 0) {
-      throw new BadRequestException('At least one topicId is required');
-    }
-
-    const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/generate`;
-
-    const payload = {
-      mode: body.mode,
-      topicIds: body.topicIds
-    };
-
-    try {
-      this.logger.log(`Requesting generation [Mode: ${body.mode}]`);
-      
-      const response = await firstValueFrom(
-        this.httpService.post(quizServiceUrl, payload, {
-          timeout: 60000, 
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-      return response.data;
-
-    } catch (error: any) {
-      this.logger.error(`Generation failed: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Failed to generate content');
-    }
-  }
-
-  // === NEW ENDPOINT: Evaluate Expanded Questions ===
-  @Post('evaluate')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Evaluate open-ended answers via AI' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['topicIds', 'answers'],
-      properties: {
         topicIds: { 
           type: 'array', 
           items: { type: 'string' },
           example: ['uuid-topic-1']
-        },
-        answers: { 
-          type: 'array',
-          description: 'List of user answers to evaluate',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'number' },
-              question: { type: 'string' },
-              answer: { type: 'string' }
-            }
-          }
         }
       }
     }
   })
-  async evaluateQuiz(@Body() body: { topicIds: string[]; answers: any[] }, @Req() req) {
-    if (!body.topicIds || body.topicIds.length === 0) {
-      throw new BadRequestException('At least one topicId is required');
-    }
-    if (!body.answers || body.answers.length === 0) {
-        throw new BadRequestException('Answers are required for evaluation');
-    }
+  async generateQuiz(@Body() body: { mode: string; topicIds: string[] }) {
+    const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/generate`;
 
-    // Forward to Quiz Service
+    // Increased timeout for AI generation
+    const response = await firstValueFrom(
+      this.httpService.post(quizServiceUrl, body, { timeout: 60000 }) 
+    );
+    return response.data;
+  }
+
+  @Post('evaluate')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Evaluate open-ended answers via AI' })
+  async evaluateQuiz(@Body() body: { topicIds: string[]; answers: any[] }) {
     const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/evaluate`;
 
-    try {
-      this.logger.log(`Requesting evaluation for ${body.topicIds.length} topics`);
-      
-      const response = await firstValueFrom(
-        this.httpService.post(quizServiceUrl, body, {
-          timeout: 60000, // 60s timeout for AI evaluation
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
-      return response.data;
-
-    } catch (error: any) {
-      this.logger.error(`Quiz evaluation failed: ${error.message}`);
-      throw new BadRequestException(error.response?.data?.message || 'Failed to evaluate quiz');
-    }
+    const response = await firstValueFrom(
+      this.httpService.post(quizServiceUrl, body, { timeout: 60000 })
+    );
+    return response.data;
   }
 }
-
 
 // =========================================================================
 // === AUTH CONTROLLER ===
@@ -410,10 +250,7 @@ export class AuthController {
   constructor(private readonly httpService: HttpService) {}
 
   @Get('health')
-  @ApiOperation({ summary: 'Health check' })
-  healthCheck() {
-    return 'OK';
-  }
+  healthCheck() { return 'OK'; }
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
@@ -421,30 +258,10 @@ export class AuthController {
   async register(@Body() body: AuthDto) {
     const userServiceUrl = `${process.env.AUTH_URL!}/auth/register`;
 
-    const payload = {
-      login: body.login,
-      password: body.password
-    };
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(userServiceUrl, payload, {
-          timeout: 600000,
-          headers: {
-            'Content-Type': 'application/json',
-          }
-        }),
-      );
-      return response.data;
-    } catch (error: any) {
-      console.error('Full error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        url: userServiceUrl,
-      });
-      throw new BadRequestException('Failed to register user');
-    }
+    const response = await firstValueFrom(
+      this.httpService.post(userServiceUrl, body)
+    );
+    return response.data;
   }
 
   @Post('login')
@@ -453,24 +270,9 @@ export class AuthController {
   async login(@Body() body: AuthDto) {
     const userServiceUrl = `${process.env.AUTH_URL!}/auth/login`;
 
-    const payload = {
-      login: body.login,
-      password: body.password
-    };
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(userServiceUrl, payload, {
-          timeout: 600000,
-          headers: {
-            'Content-Type': 'application/json',
-          }
-        }),
-      );
-      return response.data;
-    } catch (error: any) {
-        console.error('Login error:', error.response?.data || error.message);
-        throw new BadRequestException('Failed to log in');
-      }
+    const response = await firstValueFrom(
+      this.httpService.post(userServiceUrl, body)
+    );
+    return response.data;
   }
 }

@@ -2,7 +2,7 @@ import { Injectable, BadRequestException, Logger, ForbiddenException, OnModuleIn
 import { ConfigService } from '@nestjs/config';
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
 // Note: pdf-to-img is imported dynamically below due to ESM/top-level await issues
 import { InjectRepository } from '@nestjs/typeorm'; 
@@ -283,4 +283,51 @@ export class CdnService implements OnModuleInit {
       order: { createdAt: 'ASC' }
     });
   } 
+  async getFilesForClass(classId: string, userId: string) {
+    // 1. Verify Class Ownership
+    const classEntity = await this.classesRepository.findOne({
+      where: { classID: classId },
+      relations: ['user']
+    });
+
+    if (!classEntity) {
+      throw new BadRequestException('Class not found');
+    }
+
+    if (classEntity.user.userID !== userId) {
+      throw new ForbiddenException('You do not have permission to view files for this class.');
+    }
+
+    const prefix = `${classId}/uploads/`;
+
+    try {
+      const command = new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: prefix
+      });
+
+      const response = await this.s3.send(command);
+      const files = (response.Contents || []).map((file) => {
+        const key = file.Key!;
+        const filename = path.basename(key);
+        
+        return {
+          filename: filename,
+          size: file.Size,
+          created: file.LastModified
+        };
+      });
+
+      return {
+        classId: classId,
+        className: classEntity.name,
+        totalFiles: files.length,
+        files: files
+      };
+
+    } catch (error: any) {
+      this.logger.error(`Failed to list files from S3: ${error.message}`);
+      throw new BadRequestException('Failed to retrieve file list from storage.');
+    }
+  }
 }

@@ -92,4 +92,13 @@ export class CdnController {
   ) {
     return this.cdnService.getTopicsForClass(classId, userId);
   }
+
+  @Get('class/:classId/files')
+  @ApiOperation({ summary: 'Get list of uploaded files for a class' })
+  async getClassFiles(
+    @Param('classId') classId: string,
+    @Query('userId') userId: string
+  ) {
+    return this.cdnService.getFilesForClass(classId, userId);
+  }
 }

@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { clc } from '@nestjs/common/utils/cli-colors.util';
 import { json, urlencoded } from 'express';
+import { AllExceptionsFilter } from './common/http-exception.filter.js';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -14,7 +15,7 @@ async function bootstrap() {
   app.use(urlencoded({ extended: true, limit: '50mb' }));
 
   app.setGlobalPrefix('api');
-
+  app.useGlobalFilters(new AllExceptionsFilter());
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

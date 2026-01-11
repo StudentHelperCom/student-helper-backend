@@ -23,27 +23,22 @@ export class ProcessingService {
   async executeFullWorkflow(classId: string) {
     this.logger.log(`=== STARTING FULL WORKFLOW FOR CLASS ID: ${classId} ===`);
 
-    // Run AI Processing
     const processResult = await this.process(classId);
     if (processResult.status === 'empty' || processResult.status === 'error') {
        return { step: 'process', error: processResult.message };
     }
 
-    // Merge the processed files
     const mergeResult = await this.mergeFinalPdfsS3(classId);
     if (mergeResult.status === 'error') {
        return { step: 'merge', error: mergeResult.message };
     }
-
-    // Split the merged file into final topics
     const splitResult = await this.splitMergedPdf(classId);
 
-    // Cleanup 
-    this.logger.log(`Work complete. Deleting source folders for ${classId}...`);
+    // === CLEANUP SECTION ===
+    this.logger.log(`Work complete. cleaning up intermediate files for ${classId}...`);
     try {
-        await this.helpers.deleteFolderContents(`${classId}/uploads/`);
         await this.helpers.deleteFolderContents(`${classId}/processed/`);
-        this.logger.log('Cleanup successful.');
+        this.logger.log('Cleanup successful (Intermediate files removed).');
     } catch (error: any) {
         this.logger.warn(`Cleanup failed (non-critical): ${error.message}`);
     }

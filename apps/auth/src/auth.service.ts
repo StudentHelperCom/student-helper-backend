@@ -1,4 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { 
+  ConflictException, 
+  Injectable, 
+  UnauthorizedException, 
+  BadRequestException // <--- Added this import
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from './users/users.service';
 import { HashService } from './common/hash.service';
@@ -18,16 +23,16 @@ export class AuthService {
     // Password: 
     // 1. Allowed chars: Latin letters, numbers, and common special symbols
     // 2. Length 6-30
-    // 3. Must have at least 1 number (?=.*[0-9])
-    // 4. Must have at least 1 special char (?=.*[\W_])
+    // 3. Must have at least 1 number
+    // 4. Must have at least 1 special char
     const passwordRegex = /^(?=.*[0-9])(?=.*[\W_])[a-zA-Z0-9\W_]{6,30}$/;
 
     if (!loginRegex.test(login)) {
-      return 'INVALID_LOGIN_FORMAT';
+      return 'Invalid login format. Must be 6-30 alphanumeric characters.';
     }
     
     if (!passwordRegex.test(pass)) {
-      return 'INVALID_PASSWORD_FORMAT';
+      return 'Invalid password format. Must be 6-30 chars, with at least 1 number and 1 special char.';
     }
 
     return null;
@@ -36,12 +41,12 @@ export class AuthService {
   async register(email: string, password: string) { 
     const validationError = this.validateCredentials(email, password);
     if (validationError) {
-      return { status: validationError };
+      throw new BadRequestException(validationError);
     }
 
     const existingUser = await this.usersService.findByEmail(email); 
     if (existingUser) {
-      return { status: 'USER_ALREADY_EXISTS' };
+      throw new ConflictException('User already exists');
     }
 
     const hashedPassword = await this.hashService.hashData(password); 
@@ -63,12 +68,12 @@ export class AuthService {
   async login(email: string, password: string) {    
     const user = await this.usersService.findByEmail(email); 
     if (!user) {
-      return { status: 'USER_NOT_FOUND' };
+      throw new UnauthorizedException('User not found');
     }
 
     const isPasswordValid = await this.hashService.compareData(password, user.passwordHash); 
     if (!isPasswordValid) {
-      return { status: 'INVALID_CREDENTIALS' };
+      throw new UnauthorizedException('Invalid credentials');
     }
 
     const token = await this.jwtService.signAsync({
