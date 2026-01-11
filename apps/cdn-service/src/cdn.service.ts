@@ -2,9 +2,8 @@ import { Injectable, BadRequestException, Logger, ForbiddenException, OnModuleIn
 import { ConfigService } from '@nestjs/config';
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import { S3Client, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, ListObjectsV2CommandOutput } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
-// Note: pdf-to-img is imported dynamically below due to ESM/top-level await issues
 import { InjectRepository } from '@nestjs/typeorm'; 
 import { Repository } from 'typeorm';                 
 import { Class, Topic } from '@repo/database';
@@ -329,5 +328,62 @@ export class CdnService implements OnModuleInit {
       this.logger.error(`Failed to list files from S3: ${error.message}`);
       throw new BadRequestException('Failed to retrieve file list from storage.');
     }
+  }
+
+  async deleteClass(classId: string, userId: string) {
+    this.logger.log(`Attempting to delete class ${classId} for user ${userId}`);
+
+    const classEntity = await this.classesRepository.findOne({
+      where: { classID: classId },
+      relations: ['user']
+    });
+
+    if (!classEntity) {
+      throw new BadRequestException('Class not found');
+    }
+
+    if (classEntity.user.userID !== userId) {
+      throw new ForbiddenException('You do not have permission to delete this class.');
+    }
+
+    try {
+      await this.deleteS3Folder(`${classId}/`);
+    } catch (e: any) {
+      this.logger.error(`Failed to cleanup S3 for class ${classId}: ${e.message}`);
+    }
+
+
+    await this.topicsRepository.delete({ class: { classID: classId } as any });
+    await this.classesRepository.delete(classId);
+
+    this.logger.log(`Class ${classId} deleted successfully.`);
+    return { status: 'success', message: 'Class and all related data deleted.' };
+  }
+
+  private async deleteS3Folder(prefix: string) {
+    let continuationToken: string | undefined = undefined;
+
+    do {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken
+      });
+
+      const listResponse = await this.s3.send(listCommand) as ListObjectsV2CommandOutput;
+      
+      if (listResponse.Contents && listResponse.Contents.length > 0) {
+        const objectsToDelete = listResponse.Contents.map(obj => ({ Key: obj.Key }));
+        
+        await this.s3.send(new DeleteObjectsCommand({
+          Bucket: this.bucket,
+          Delete: { Objects: objectsToDelete }
+        }));
+        
+        this.logger.log(`Deleted ${objectsToDelete.length} items from S3 prefix ${prefix}`);
+      }
+
+      continuationToken = listResponse.NextContinuationToken;
+    } while (continuationToken);
   }
 }

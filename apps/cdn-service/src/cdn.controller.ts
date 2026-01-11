@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Logger, BadRequestException, Param, Query } from '@nestjs/common';
+import { Controller, Post, Body, Get, Logger, BadRequestException, Param, Query, Delete } from '@nestjs/common';
 import { CdnService } from './cdn.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -100,5 +100,14 @@ export class CdnController {
     @Query('userId') userId: string
   ) {
     return this.cdnService.getFilesForClass(classId, userId);
+  }
+
+  @Delete('class/:classId')
+  @ApiOperation({ summary: 'Delete a class and all its files' })
+  async deleteClass(
+    @Param('classId') classId: string, 
+    @Query('userId') userId: string
+  ) {
+    return this.cdnService.deleteClass(classId, userId);
   }
 }

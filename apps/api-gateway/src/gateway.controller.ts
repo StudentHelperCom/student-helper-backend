@@ -9,6 +9,7 @@ import {
   Logger,   
   Get,
   Param,
+  Delete,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { HttpService } from '@nestjs/axios';
@@ -50,8 +51,6 @@ export class CdnController {
   async createClass(@Body() body: CreateClassDto, @Req() req) {
       const user = req.user;
       const cdnUrl = `${process.env.CDN_URL!}/cdn/create-class`;
-
-      // Filter handles errors automatically
       const response = await firstValueFrom(
         this.httpService.post(cdnUrl, {
           ...body,
@@ -101,7 +100,6 @@ export class CdnController {
   async getClasses(@Req() req) {
     const user = req.user;
     const cdnUrl = `${process.env.CDN_URL!}/cdn/user/${user.userId}`;
-
     const response = await firstValueFrom(this.httpService.get(cdnUrl));
     return response.data;
   }
@@ -112,7 +110,6 @@ export class CdnController {
   async getTopicsForClass(@Param('classId') classId: string, @Req() req) {
     const user = req.user;
     const cdnUrl = `${process.env.CDN_URL!}/cdn/class/${classId}/topics?userId=${user.userId}`;
-
     const response = await firstValueFrom(this.httpService.get(cdnUrl));
     return response.data;
   }
@@ -123,8 +120,19 @@ export class CdnController {
   async getClassFiles(@Param('classId') classId: string, @Req() req) {
     const user = req.user;
     const cdnUrl = `${process.env.CDN_URL!}/cdn/class/${classId}/files?userId=${user.userId}`;
-
     const response = await firstValueFrom(this.httpService.get(cdnUrl));
+    return response.data;
+  }
+
+  @Delete('class/:classId')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Delete a class permanently' })
+  async deleteClass(@Param('classId') classId: string, @Req() req) {
+    const user = req.user;
+    const cdnUrl = `${process.env.CDN_URL!}/cdn/class/${classId}?userId=${user.userId}`;
+    const response = await firstValueFrom(
+      this.httpService.delete(cdnUrl)
+    );
     return response.data;
   }
 }
