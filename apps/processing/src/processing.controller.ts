@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Logger } from '@nestjs/common';
+import { Controller, Post, Body, Get, Logger, Param } from '@nestjs/common';
 import { ProcessingService } from './processing.service';
 
 @Controller('processing')
@@ -31,5 +31,11 @@ export class ProcessingController {
   @Post('split')
   async splitMerged(@Body() body: { classId: string }) {
     return this.svc.splitMergedPdf(body.classId);
+  }
+
+  @Get('status/:classId')
+  async getStatus(@Param('classId') classId: string) {
+    this.logger.log(`Checking status for Class ID: ${classId}`);
+    return this.svc.checkStatus(classId);
   }
 }

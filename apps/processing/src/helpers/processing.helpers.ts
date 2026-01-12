@@ -6,7 +6,8 @@ import {
   PutObjectCommand, 
   ListObjectsV2Command, 
   ListObjectsV2CommandOutput, 
-  DeleteObjectsCommand 
+  DeleteObjectsCommand, 
+  HeadObjectCommand
 } from '@aws-sdk/client-s3';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { Readable } from 'stream';
@@ -92,6 +93,26 @@ export class ProcessingHelpers {
     } catch (error: any) {
       this.logger.error(`Failed to cleanup folder ${prefix}: ${error.message}`);
     }
+  }
+
+  public async checkFileExists(key: string): Promise<boolean> {
+    try {
+      await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return true;
+    } catch (error: any) {
+      if (error.name === 'NotFound') return false;
+      return false;
+    }
+  }
+  
+  public async isFolderNotEmpty(prefix: string): Promise<boolean> {
+    const command = new ListObjectsV2Command({
+      Bucket: this.bucket,
+      Prefix: prefix,
+      MaxKeys: 1 // We only need to know if at least 1 exists
+    });
+    const res = await this.s3.send(command);
+    return !!(res.Contents && res.Contents.length > 0);
   }
 
   public async deleteFile(key: string) {

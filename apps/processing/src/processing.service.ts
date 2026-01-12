@@ -190,7 +190,7 @@ export class ProcessingService {
   // =========================================================================
   // === SPLIT MERGE FILES ===
   // =========================================================================
-  async splitMergedPdf(classId: string) {
+async splitMergedPdf(classId: string) {
     const rootFolderPrefix = `${classId}/`;
     const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
@@ -206,8 +206,9 @@ export class ProcessingService {
     }
 
     const lines = fullText.split('\n');
-    // Change topics structure to include the name
-    const topics: { 
+    
+    // Intermediate storage for parsed topics
+    const rawTopics: { 
         number: string; 
         content: string; 
         name: string;
@@ -220,6 +221,7 @@ export class ProcessingService {
     const literatureKeywords = ['bibliografia', 'literatura', 'źródła', 'wykaz', 'references', 'bibliography'];
     let isInsideLiterature = false;
 
+    // 1. PARSE TEXT INTO RAW TOPICS
     for (const line of lines) {
       const trimmed = line.trim();
       const match = trimmed.match(/^(\d+)\.\s+(.*)/); 
@@ -236,7 +238,7 @@ export class ProcessingService {
         }
 
         if (currentTopicString) {
-          topics.push({
+          rawTopics.push({
             number: currentTopicString,
             content: currentContent.join('\n'),
             name: currentTopicName || `Topic ${currentTopicString}`
@@ -248,49 +250,64 @@ export class ProcessingService {
         currentTopicName = topicTitle;
         currentContent = [];
 
-
       } else {
         if (currentTopicString) currentContent.push(line);
       }
     }
 
-    // Push the very last topic
+    // Push the last topic
     if (currentTopicString && currentContent.length > 0) {
-        topics.push({ 
+        rawTopics.push({ 
             number: currentTopicString, 
             content: currentContent.join('\n'),
             name: currentTopicName
         });
     }
 
+    // 2. DEDUPLICATE NAMES (The Fix)
+    const nameTracker = new Map<string, number>();
+    const finalTopics = rawTopics.map((t) => {
+        let uniqueName = t.name;
+        // If this name has been seen before, append a counter
+        if (nameTracker.has(uniqueName)) {
+            const count = nameTracker.get(uniqueName)! + 1;
+            nameTracker.set(uniqueName, count);
+            uniqueName = `${uniqueName} (${count})`;
+        } else {
+            nameTracker.set(uniqueName, 1);
+        }
+        return { ...t, name: uniqueName };
+    });
+
+    // 3. GENERATE FILES & DB ENTITIES
     const generatedFiles: string[] = [];
     const topicEntities: Topic[] = [];
 
     this.logger.log(`Cleaning up old topics for class ${classId}...`);
+    // Note: This delete might fail if foreign keys exist elsewhere, handle with care in prod
     await this.topicsRepository.delete({ class: { classID: classId } as any });
 
-    // Parallel upload of split files
-    const uploadPromises = topics.map(async (topic) => {
-      // 1. Generate UUID
+    const uploadPromises = finalTopics.map(async (topic) => {
+      // Generate UUID
       const newTopicId = randomUUID(); 
 
-      // 2. Filename for S3
+      // Filename for S3
       const fileName = `${newTopicId}.pdf`; 
       const finalKey = `${rootFolderPrefix}${fileName}`;
       
-      // 3. Generate PDF
+      // Generate PDF
       const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId);
       await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
       generatedFiles.push(finalKey);
       
       const newTopic = this.topicsRepository.create({
           topicID: newTopicId,         
-          name: topic.name,            
+          name: topic.name,  // Now guaranteed unique          
           class: { classID: classId } as any,
       });
       
       topicEntities.push(newTopic);
-  });
+    });
 
     await Promise.all(uploadPromises);
     
@@ -308,9 +325,34 @@ export class ProcessingService {
         files: generatedFiles
     };
   }
+  
+  async checkStatus(classId: string) {
+    // 1. Check if Topic Entities exist in DB
+    const topicCount = await this.topicsRepository.count({ 
+        where: { class: { classID: classId } as any } 
+    });
+
+    if (topicCount === 0) {
+        return { isComplete: false, reason: 'No topics generated yet' };
+    }
+
+    // 2. Check S3: Final Merged PDF must exist
+    const finalMergedKey = `${classId}/Final_Merged_${classId}.pdf`;
+    const hasMergedPdf = await this.helpers.checkFileExists(finalMergedKey);
+
+    if (!hasMergedPdf) {
+        return { isComplete: false, reason: 'Final merged PDF missing' };
+    }
+
+    const uploadsPrefix = `${classId}/uploads/`;
+    const hasUploads = await this.helpers.isFolderNotEmpty(uploadsPrefix);
+    return { 
+        isComplete: true, 
+        stats: {
+            topicsCount: topicCount,
+            hasMergedPdf: true,
+            hasUploads: true
+        }
+    };
+  }
 }
-
-
-
-
-

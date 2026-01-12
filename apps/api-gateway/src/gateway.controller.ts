@@ -190,6 +190,18 @@ export class ProcessingController {
     );
     return response.data;
   }
+
+  @Get('status/:classId')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Check if processing workflow is complete' })
+  async getStatus(@Param('classId') classId: string) {
+    const processingUrl = `${process.env.PROCESSING_URL!}/processing/status/${classId}`;
+    
+    const response = await firstValueFrom(
+      this.httpService.get(processingUrl)
+    );
+    return response.data;
+  }
 }
 
 // =========================================================================
