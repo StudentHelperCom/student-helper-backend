@@ -14,9 +14,16 @@
     "resolveJsonModule": true,
     "resolvePackageJsonExports": true,
     "skipLibCheck": true,
-    "strict": true,
+    
     "target": "ES2022",
     "allowSyntheticDefaultImports": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+
+    "strict": true, 
+    "noImplicitAny": false,
+    "strictPropertyInitialization": false
   }
 }

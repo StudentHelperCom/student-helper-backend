@@ -25,6 +25,7 @@ export class ProcessingService {
 
     const processResult = await this.process(classId);
     if (processResult.status === 'empty' || processResult.status === 'error') {
+       this.logger.warn(`Workflow stopped: ${processResult.message}`);
        return { step: 'process', error: processResult.message };
     }
 
@@ -34,7 +35,6 @@ export class ProcessingService {
     }
     const splitResult = await this.splitMergedPdf(classId);
 
-    // === CLEANUP SECTION ===
     this.logger.log(`Work complete. cleaning up intermediate files for ${classId}...`);
     try {
         await this.helpers.deleteFolderContents(`${classId}/processed/`);
@@ -53,33 +53,33 @@ export class ProcessingService {
     };
   }
 
-  // =========================================================================
-  // === FILE PROCESSING ===
-  // =========================================================================
   async process(classId: string) {
     const uploadsPrefix = `${classId}/uploads/`;
 
-    const s3PdfFiles = await this.helpers.listPdfFiles(uploadsPrefix);
+    // Używamy listFiles (zwraca wszystko) i filtrujemy tutaj
+    let allFiles = await this.helpers.listFiles(uploadsPrefix);
 
-    if (!s3PdfFiles.length) {
-         return { status: 'empty', message: `No PDF files found in ${uploadsPrefix}` };
+    const sourceFiles = allFiles.filter(key => 
+        key.toLowerCase().endsWith('.pdf') || key.toLowerCase().endsWith('.txt')
+    );
+
+    if (!sourceFiles.length) {
+         return { status: 'empty', message: `No supported files (PDF/TXT) found in ${uploadsPrefix}` };
     }
 
-    this.logger.log(`Found ${s3PdfFiles.length} files. Processing in batches of ${BATCH_SIZE}...`);
+    this.logger.log(`Found ${sourceFiles.length} files. Processing in batches of ${BATCH_SIZE}...`);
     const results: any[] = [];
 
-    // Loop through files in chunks (Batches)
-    for (let i = 0; i < s3PdfFiles.length; i += BATCH_SIZE) {
-        const batch = s3PdfFiles.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < sourceFiles.length; i += BATCH_SIZE) {
+        const batch = sourceFiles.slice(i, i + BATCH_SIZE);
         
-        // Process current batch in parallel
         const batchResults = await Promise.all(
-            batch.map(pdfKey => this.processSingleFile(classId, pdfKey))
+            batch.map(fileKey => this.processSingleFile(classId, fileKey))
         );
         
         results.push(...batchResults);
 
-        if (i + BATCH_SIZE < s3PdfFiles.length) {
+        if (i + BATCH_SIZE < sourceFiles.length) {
             this.logger.log('Waiting 5 seconds between batches...');
             await this.helpers.sleep(5000);
         }
@@ -88,17 +88,27 @@ export class ProcessingService {
     return { status: 'batch_complete', details: results };
   }
 
-  private async processSingleFile(classId: string, pdfKey: string) {
-    const baseName = path.basename(pdfKey, '.pdf');
-    const txtKey = `${classId}/processed/${baseName}.txt`; 
+  private async processSingleFile(classId: string, fileKey: string) {
+    const ext = path.extname(fileKey).toLowerCase();
+    const baseName = path.basename(fileKey, ext);
 
-    this.logger.log(`>> Processing: ${baseName}`);
+    this.logger.log(`>> Processing: ${baseName} (Type: ${ext})`);
 
     try {
-      const [txtBuffer, pdfBuffer] = await Promise.all([
-         this.helpers.getFileWithRetry(txtKey),
-         this.helpers.getFileWithRetry(pdfKey)
-      ]);
+      let txtBuffer: Buffer;
+      let pdfBuffer: Buffer;
+
+      if (ext === '.txt') {
+        txtBuffer = await this.helpers.getFileWithRetry(fileKey);
+        pdfBuffer = Buffer.from(''); 
+      } else {
+        const txtKey = `${classId}/processed/${baseName}.txt`; 
+        
+        [txtBuffer, pdfBuffer] = await Promise.all([
+           this.helpers.getFileWithRetry(txtKey),
+           this.helpers.getFileWithRetry(fileKey)
+        ]);
+      }
 
       const aiOutput = await this.aiService.askGeminiWithRetry(txtBuffer, pdfBuffer);
 
@@ -123,33 +133,34 @@ export class ProcessingService {
     }
   }
 
-  // =========================================================================
-  // === FILE MERGING ===
-  // =========================================================================
   async mergeFinalPdfsS3(classId: string) {
     const rootFolderPrefix = `${classId}/`;
     const finalSubfolderPrefix = `${rootFolderPrefix}final/`;
 
     this.logger.log(`Listing files to merge from: ${finalSubfolderPrefix}`);
 
-    const s3PdfFiles = await this.helpers.listPdfFiles(finalSubfolderPrefix);
+    const allFiles = await this.helpers.listFiles(finalSubfolderPrefix);
+
+    // FILTRACJA: Bierzemy tylko PDFy jako "kotwice", żeby nie dublować (bo TXT i tak pobierzemy w pętli)
+    const s3PdfFiles = allFiles.filter(key => key.endsWith('.pdf'));
 
     if (!s3PdfFiles.length) {
       return { status: 'empty', message: `No PDFs found in ${finalSubfolderPrefix} to merge.` };
     }
 
-    this.logger.log(`Found ${s3PdfFiles.length} files. Extracting content...`);
+    this.logger.log(`Found ${s3PdfFiles.length} PDF files (anchors) to merge. Extracting content...`);
 
     let allTextContent = '';
     
-    // Parallel download of text content for speed
     const textContents = await Promise.all(s3PdfFiles.map(async (pdfKey) => {
         try {
+            // Zamieniamy .pdf na .txt, aby pobrać treść tekstową
             const txtKey = pdfKey.replace('.pdf', '.txt');
             const txtBuffer = await this.helpers.getFile(txtKey);
-            return `\n\n=== CONTENT FROM ${path.basename(pdfKey)} ===\n${txtBuffer.toString()}`;
+            // Dodajemy nagłówek, żeby AI wiedziało co to za plik (opcjonalnie)
+            return `\n\n=== CONTENT FROM PART ${path.basename(pdfKey, '.pdf')} ===\n${txtBuffer.toString()}`;
         } catch (error) {
-            this.logger.error(`Error getting text content from ${pdfKey}:`, error);
+            this.logger.error(`Error getting text content for ${pdfKey}:`, error);
             return '';
         }
     }));
@@ -169,7 +180,6 @@ export class ProcessingService {
     const finalPdfKey = `${rootFolderPrefix}Final_Merged_${classId}.pdf`;
     const finalTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
-    // 1. Delete the "final/" subfolder
     this.logger.log(`Cleaning up intermediate AI files...`);
     await this.helpers.deleteFolderContents(finalSubfolderPrefix); 
 
@@ -187,10 +197,7 @@ export class ProcessingService {
     };
   }
 
-  // =========================================================================
-  // === SPLIT MERGE FILES ===
-  // =========================================================================
-async splitMergedPdf(classId: string) {
+  async splitMergedPdf(classId: string) {
     const rootFolderPrefix = `${classId}/`;
     const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
@@ -207,7 +214,6 @@ async splitMergedPdf(classId: string) {
 
     const lines = fullText.split('\n');
     
-    // Intermediate storage for parsed topics
     const rawTopics: { 
         number: string; 
         content: string; 
@@ -221,7 +227,6 @@ async splitMergedPdf(classId: string) {
     const literatureKeywords = ['bibliografia', 'literatura', 'źródła', 'wykaz', 'references', 'bibliography'];
     let isInsideLiterature = false;
 
-    // 1. PARSE TEXT INTO RAW TOPICS
     for (const line of lines) {
       const trimmed = line.trim();
       const match = trimmed.match(/^(\d+)\.\s+(.*)/); 
@@ -255,7 +260,6 @@ async splitMergedPdf(classId: string) {
       }
     }
 
-    // Push the last topic
     if (currentTopicString && currentContent.length > 0) {
         rawTopics.push({ 
             number: currentTopicString, 
@@ -264,11 +268,9 @@ async splitMergedPdf(classId: string) {
         });
     }
 
-    // 2. DEDUPLICATE NAMES (The Fix)
     const nameTracker = new Map<string, number>();
     const finalTopics = rawTopics.map((t) => {
         let uniqueName = t.name;
-        // If this name has been seen before, append a counter
         if (nameTracker.has(uniqueName)) {
             const count = nameTracker.get(uniqueName)! + 1;
             nameTracker.set(uniqueName, count);
@@ -279,30 +281,25 @@ async splitMergedPdf(classId: string) {
         return { ...t, name: uniqueName };
     });
 
-    // 3. GENERATE FILES & DB ENTITIES
     const generatedFiles: string[] = [];
     const topicEntities: Topic[] = [];
 
     this.logger.log(`Cleaning up old topics for class ${classId}...`);
-    // Note: This delete might fail if foreign keys exist elsewhere, handle with care in prod
     await this.topicsRepository.delete({ class: { classID: classId } as any });
 
     const uploadPromises = finalTopics.map(async (topic) => {
-      // Generate UUID
       const newTopicId = randomUUID(); 
 
-      // Filename for S3
       const fileName = `${newTopicId}.pdf`; 
       const finalKey = `${rootFolderPrefix}${fileName}`;
       
-      // Generate PDF
       const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId);
       await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
       generatedFiles.push(finalKey);
       
       const newTopic = this.topicsRepository.create({
           topicID: newTopicId,         
-          name: topic.name,  // Now guaranteed unique          
+          name: topic.name,         
           class: { classID: classId } as any,
       });
       
@@ -327,7 +324,6 @@ async splitMergedPdf(classId: string) {
   }
   
   async checkStatus(classId: string) {
-    // 1. Check if Topic Entities exist in DB
     const topicCount = await this.topicsRepository.count({ 
         where: { class: { classID: classId } as any } 
     });
@@ -336,7 +332,6 @@ async splitMergedPdf(classId: string) {
         return { isComplete: false, reason: 'No topics generated yet' };
     }
 
-    // 2. Check S3: Final Merged PDF must exist
     const finalMergedKey = `${classId}/Final_Merged_${classId}.pdf`;
     const hasMergedPdf = await this.helpers.checkFileExists(finalMergedKey);
 

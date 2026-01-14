@@ -130,17 +130,15 @@ RULES:
   // Private Implementation Details
   // -------------------------------------------------------------------------
 
-  private async askGemini(txtBuffer: Buffer, pdfBuffer: Buffer): Promise<string> {
+private async askGemini(txtBuffer: Buffer, pdfBuffer: Buffer): Promise<string> {
     try {
       const textContent = txtBuffer.toString();
-      const pdfBase64 = pdfBuffer.toString('base64');
-
-      const requestBody = {
-        contents: [
-          {
-            parts: [
-              {
-                text: `ANALYZE THIS EDUCATIONAL CONTENT AND ORGANIZE IT INTO NUMBERED TOPICS:
+      
+      // 1. Przygotuj podstawową część z tekstem (promptem)
+      // Zwróć uwagę na 'any[]', aby TypeScript nie krzyczał przy pushowaniu różnych typów obiektów
+      const parts: any[] = [
+        {
+          text: `ANALYZE THIS EDUCATIONAL CONTENT AND ORGANIZE IT INTO NUMBERED TOPICS:
 
   ORIGINAL CONTENT:
   ${textContent}
@@ -177,19 +175,29 @@ RULES:
   - If there is no images dont write "There are no images or diagrams present in the provided PDF content to describe."
   - There is no need to include ** near the topics and other words. Dont use bold text or something instead of standart text.Please answer in plain paragraphs, do not use bullet points or numbered lists
   - Dont write sentences like Oto połączona i zdeduplikowana treść:, just the information i need`
-              },
-              {
-                inlineData: {
-                  mimeType: 'application/pdf',
-                  data: pdfBase64
-                }
-              }
-            ]
+        }
+      ];
+
+      // 2. Dodaj część z PDF TYLKO JEŚLI bufor nie jest pusty
+      if (pdfBuffer && pdfBuffer.length > 0) {
+        const pdfBase64 = pdfBuffer.toString('base64');
+        parts.push({
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: pdfBase64
+          }
+        });
+      }
+
+      const requestBody = {
+        contents: [
+          {
+            parts: parts // Używamy dynamicznie zbudowanej tablicy
           }
         ],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 16384, // Increased from 8192 to 16384 to fix truncated text
+          maxOutputTokens: 16384, 
         }
       };
 
@@ -197,16 +205,18 @@ RULES:
       
       const res = await axios.post(urlWithKey, requestBody, {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 600000, // Increased from 3m to 10m to prevent network cutoffs
+        timeout: 600000, 
       });
 
       return this.extractTextFromResponse(res);
 
     } catch (error: any) {
-      throw new Error(`Gemini API failed: ${error.response?.data?.error?.message || error.message}`);
+      // Warto dodać logowanie szczegółów błędu z response data, jeśli dostępne
+      const details = error.response?.data?.error?.message || error.message;
+      throw new Error(`Gemini API failed: ${details}`);
     }
   }
-
+  
   private extractTextFromResponse(res: any): string {
     if (res.data.candidates?.[0]?.content?.parts?.[0]?.text) {
         return res.data.candidates[0].content.parts[0].text;

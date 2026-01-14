@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config'; // Import this
+import { ConfigService } from '@nestjs/config';
 import { 
   S3Client, 
   GetObjectCommand, 
@@ -24,7 +24,6 @@ export class ProcessingHelpers {
   private readonly bucket: string;
 
   constructor(private readonly configService: ConfigService) {
-    // 1. Initialize S3 inside the constructor using ConfigService
     this.s3 = new S3Client({
       region: this.configService.getOrThrow<string>('AWS_REGION'),
       credentials: {
@@ -37,13 +36,8 @@ export class ProcessingHelpers {
       } as any
     });
 
-    // 2. Safely retrieve the bucket name
     this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
   }
-
-  // -------------------------------------------------------------------------
-  // S3 & File Helpers
-  // -------------------------------------------------------------------------
 
   public sanitizeFilename(filename: string): string {
     const baseName = path.basename(filename, path.extname(filename));
@@ -109,7 +103,7 @@ export class ProcessingHelpers {
     const command = new ListObjectsV2Command({
       Bucket: this.bucket,
       Prefix: prefix,
-      MaxKeys: 1 // We only need to know if at least 1 exists
+      MaxKeys: 1
     });
     const res = await this.s3.send(command);
     return !!(res.Contents && res.Contents.length > 0);
@@ -124,10 +118,6 @@ export class ProcessingHelpers {
     }));
   }
 
-  // -------------------------------------------------------------------------
-  // Retry Logic Helpers
-  // -------------------------------------------------------------------------
-
   public async getFileWithRetry(key: string, attempts = 3): Promise<Buffer> {
     for (let i = 0; i < attempts; i++) {
         try {
@@ -135,7 +125,7 @@ export class ProcessingHelpers {
         } catch (error: any) {
             this.logger.warn(`Attempt ${i + 1} failed for ${key}: ${error.message}`);
             if (i === attempts - 1) throw error;
-            await sleep(1000 * (i + 1)); // Backoff: 1s, 2s, 3s
+            await sleep(1000 * (i + 1));
         }
     }
     throw new Error('Unreachable code');
@@ -144,10 +134,6 @@ export class ProcessingHelpers {
   public async sleep(ms: number) {
       return sleep(ms);
   }
-
-  // -------------------------------------------------------------------------
-  // PDF Generation Helpers
-  // -------------------------------------------------------------------------
 
   public async buildPdf(content: string, id: string): Promise<Buffer> {
     const pdf = await PDFDocument.create();
@@ -179,8 +165,6 @@ export class ProcessingHelpers {
 
       const cleanLine = line.trim();
 
-      // Ensure we only bold ACTUAL top-level headers, not sub-lists we masked with ')'
-      // The splitMergedPdf turns sublists into "1)" so this regex "^\d+\." won't match them.
       const isTopicLine = /^\d+\.\s/.test(cleanLine);
 
       if (isTopicLine) {
@@ -247,14 +231,13 @@ export class ProcessingHelpers {
 
     return lines;
   }
-  public async listPdfFiles(prefix: string): Promise<string[]> {
-  const listCommand = new ListObjectsV2Command({
-    Bucket: this.bucket,
-    Prefix: prefix,
-  });
+  public async listFiles(prefix: string): Promise<string[]> {
+    const listCommand = new ListObjectsV2Command({
+      Bucket: this.bucket,
+      Prefix: prefix,
+    });
 
-  const res: ListObjectsV2CommandOutput = await this.s3.send(listCommand);
-  return res.Contents?.filter(obj => obj.Key?.endsWith('.pdf')).map(obj => obj.Key!) || [];
+    const res: ListObjectsV2CommandOutput = await this.s3.send(listCommand);
+    return res.Contents?.map(obj => obj.Key!) || [];
+  }
 }
-}
-
