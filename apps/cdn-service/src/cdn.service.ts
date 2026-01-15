@@ -20,8 +20,6 @@ import {
 import { createWorker } from 'tesseract.js';
 import { ClassesRepository, TopicsRepository } from '@repo/database'; 
 import { CreateClassDto } from '@repo/common';
-import { DataSource } from 'typeorm';
-import { Class, Topic } from '@repo/database';
 
 @Injectable()
 export class CdnService implements OnModuleInit {
@@ -38,8 +36,6 @@ export class CdnService implements OnModuleInit {
     // ZMIANA: Wstrzykujemy repozytoria zamiast CdnDatabaseService
     private readonly classesRepo: ClassesRepository,
     private readonly topicsRepo: TopicsRepository,
-    private readonly dataSource: DataSource
-    
   ) {
     this.s3 = new S3Client({
       region: this.configService.getOrThrow<string>('AWS_REGION'),
@@ -77,24 +73,12 @@ async saveFile(data: {
     const tempFilePath = path.join(this.rootTempDir, `${uniquePrefix}_${sanitizedFilename}`);
     const filesToCleanup: string[] = [tempFilePath];
 
-    // Rozpoczynamy transakcję
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
     try {
-      // 1. Logika bazy danych (wewnątrz transakcji)
-      let classEntity = await queryRunner.manager.findOne(Class, { 
-        where: { user: { userID: data.userId }, name: data.className } 
-      });
-
-      if (!classEntity) {
-        classEntity = queryRunner.manager.create(Class, {
-          user: { userID: data.userId } as any,
-          name: data.className
-        });
-        await queryRunner.manager.save(classEntity);
-      }
+      // 1. Repository handles transaction for class creation/lookup
+      const classEntity = await this.classesRepo.findOrCreateClassTransactional(
+        data.userId,
+        data.className
+      );
       
       const classId = classEntity.classID;
 
@@ -103,7 +87,7 @@ async saveFile(data: {
       const ext = path.extname(sanitizedFilename).toLowerCase();
       let tempTextPath: string | null = null;
       
-      // OCR robimy PRZED uploadem do S3 i commitem, żeby w razie błędu nie śmiecić
+      // OCR robimy PRZED uploadem do S3, żeby w razie błędu nie śmiecić
       if (ext === '.pdf') {
         tempTextPath = await this.processPdfTextOnly(tempFilePath, sanitizedFilename, uniquePrefix);
       } else if (['.jpg', '.jpeg', '.png', '.tiff', '.bmp'].includes(ext)) {
@@ -124,9 +108,7 @@ async saveFile(data: {
         await this.uploadToS3(s3TextKey, Buffer.from(textContent, 'utf8'));
       }
 
-      // 4. Zatwierdzenie transakcji DB (dopiero jak S3 i OCR się udały)
-      await queryRunner.commitTransaction();
-
+      // 4. Zatwierdzenie - wszystko się powiodło
       return { 
         filename: sanitizedFilename,
         classId: classId,
@@ -135,16 +117,9 @@ async saveFile(data: {
       };
 
     } catch (error) {
-      // ROLLBACK BAZY DANYCH
-      await queryRunner.rollbackTransaction();
-      this.logger.error('File processing error (Rollback executed):', error);
-      
-      // Opcjonalnie: Tutaj można by dodać logikę czyszczenia S3, jeśli upload się powiódł, a commit bazy nie
-      // ale w obecnej kolejności (Upload -> Commit) rollback bazy jest bezpieczny.
-      
+      this.logger.error('File processing error:', error);
       throw new BadRequestException('Failed to process or upload file');
     } finally {
-      await queryRunner.release();
       for (const filePath of filesToCleanup) {
         await fs.unlink(filePath).catch(() => {});
       }
@@ -224,47 +199,28 @@ async saveFile(data: {
   async createClass(userId: string, data: CreateClassDto) {
     this.logger.log(`Service creating class for User: ${userId}, Name: ${data.className}`);
 
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
     try {
-      const existingClass = await queryRunner.manager.findOne(Class, {
-          where: { user: { userID: userId }, name: data.className }
-      });
-
-      if (existingClass) {
-          throw new ConflictException('Class with this name already exists');
-      }
+      // Repository handles transaction with existence check
+      const saved = await this.classesRepo.createClassTransactional(userId, data);
       
-      const newClass = queryRunner.manager.create(Class, {
-          user: { userID: userId } as any,
-          name: data.className,
-          examDate: data.examDate ? new Date(data.examDate) : undefined,
-          examLocation: data.examLocation
-      });
-
-      const saved = await queryRunner.manager.save(newClass);
-      
-      // Próba utworzenia folderu w S3
+      // Próba utworzenia folderu w S3 po zapisie do DB
       const folderKey = `${saved.classID}/`;
       try {
         await this.uploadToS3(folderKey, Buffer.from(''));
       } catch (s3Error) {
-        throw new InternalServerErrorException("Failed to initialize S3 storage for class");
+        this.logger.error(`S3 initialization failed for class ${saved.classID}`, s3Error);
+        // Nie rzucamy błędu - class jest utworzony, folder może być utworzony później
       }
 
-      await queryRunner.commitTransaction();
       this.logger.log(`Class saved successfully. ID: ${saved.classID}`);
       return saved;
 
     } catch (error: any) {
-      await queryRunner.rollbackTransaction();
-      if (error instanceof ConflictException) throw error;
+      if (error.message === 'CLASS_ALREADY_EXISTS') {
+        throw new ConflictException('Class with this name already exists');
+      }
       this.logger.error(`Error creating class: ${error.message}`);
       throw new BadRequestException('Failed to create class');
-    } finally {
-      await queryRunner.release();
     }
   }
 
@@ -325,46 +281,28 @@ async saveFile(data: {
 async deleteClass(classId: string, userId: string) {
     this.logger.log(`Attempting to delete class ${classId} for user ${userId}`);
 
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
     try {
-      // 1. Sprawdź uprawnienia i zablokuj wiersz (Pessimistic Write)
-      const classEntity = await queryRunner.manager.findOne(Class, {
-        where: { classID: classId },
-        relations: ['user'],
-        lock: { mode: 'pessimistic_write' } // Blokujemy, żeby nikt inny nie usunął w międzyczasie
-      });
+      // 1. Usuń z S3 PRZED transakcją DB
+      // Jeśli S3 zawiedzie, nie dotykamy bazy
+      await this.deleteS3Folder(`${classId}/`);
 
-      if (!classEntity) throw new BadRequestException('Class not found');
-      if (classEntity.user.userID !== userId) {
-        throw new ForbiddenException('You do not have permission to delete this class.');
-      }
+      // 2. Repository handles transaction with pessimistic lock
+      await this.classesRepo.deleteClassWithTopicsTransactional(classId, userId);
 
-      // 2. Usuń z DB (najpierw DB - dzięki transakcji to bezpieczne)
-      // Cascade powinno usunąć Topiki, ale dla pewności używamy managera
-      await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
-      await queryRunner.manager.delete(Class, classId);
-
-      // 3. Usuń z S3
-      // Jeśli to zawiedzie, wycofamy usunięcie z DB
-      try {
-        await this.deleteS3Folder(`${classId}/`);
-      } catch (s3Error: any) {
-         this.logger.error(`S3 deletion failed: ${s3Error.message}. Rolling back DB deletion.`);
-         throw new InternalServerErrorException('Failed to delete files from storage, aborting operation.');
-      }
-
-      await queryRunner.commitTransaction();
       this.logger.log(`Class ${classId} deleted successfully.`);
       return { status: 'success', message: 'Class and all related data deleted.' };
 
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
+    } catch (error: any) {
+      // Handle specific errors from repository
+      if (error.message === 'CLASS_NOT_FOUND') {
+        throw new BadRequestException('Class not found');
+      }
+      if (error.message === 'FORBIDDEN') {
+        throw new ForbiddenException('You do not have permission to delete this class.');
+      }
+      
+      this.logger.error(`Delete class failed: ${error.message}`);
       throw error;
-    } finally {
-      await queryRunner.release();
     }
   }
   

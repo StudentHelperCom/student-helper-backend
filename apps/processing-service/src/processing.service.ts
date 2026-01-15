@@ -4,7 +4,6 @@ import * as path from 'path';
 import { ProcessingAi } from './helpers/processing.ai';
 import { randomUUID } from 'crypto';
 import { TopicsRepository } from '@repo/database';
-import { DataSource } from 'typeorm';
 import { Topic } from '@repo/database';
 
 const BATCH_SIZE = 3;
@@ -17,7 +16,6 @@ export class ProcessingService {
     private readonly helpers: ProcessingHelpers,
     private readonly aiService: ProcessingAi,
     private readonly topicsRepo: TopicsRepository,
-    private readonly dataSource: DataSource
   ) {}
 
   async executeFullWorkflow(classId: string) {
@@ -329,14 +327,9 @@ export class ProcessingService {
         return { ...t, name: uniqueName };
     });
 
- const generatedFiles: string[] = [];
+    const generatedFiles: string[] = [];
     const topicEntities: Topic[] = [];
     
-    // START TRANSAKCJI
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
     try {
       this.logger.log(`Generating PDFs and uploading to S3...`);
 
@@ -353,7 +346,7 @@ export class ProcessingService {
         generatedFiles.push(finalKey); // Zbieramy klucze, żeby je usunąć w razie rollbacku
         
         // Przygotowujemy encję (ale jeszcze nie zapisujemy)
-        const newTopic = queryRunner.manager.create(Topic, {
+        const newTopic = this.topicsRepo.create({
             topicID: newTopicId,         
             name: topic.name,         
             class: { classID: classId } as any,
@@ -363,22 +356,16 @@ export class ProcessingService {
 
       await Promise.all(uploadPromises);
 
-      // 2. Operacje na bazie danych (Atomowe zamienienie starych na nowe)
+      // 2. Operacje na bazie danych - Repository handles transaction
       this.logger.log(`Updating database topics for class ${classId}...`);
-      
-      // Usuń stare
-      await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
-      
-      // Zapisz nowe
-      if (topicEntities.length > 0) {
-        await queryRunner.manager.save(topicEntities);
-      }
+      const savedTopics = await this.topicsRepo.replaceTopicsForClassTransactional(
+        classId,
+        topicEntities
+      );
 
-      // 3. Commit
-      await queryRunner.commitTransaction();
-      this.logger.log(`Successfully split and saved ${topicEntities.length} new topics.`);
+      this.logger.log(`Successfully split and saved ${savedTopics.length} new topics.`);
 
-      // 4. Cleanup (po sukcesie)
+      // 3. Cleanup (po sukcesie)
       this.logger.log('Deleting merged TXT file...');
       await this.helpers.deleteFile(mergedTxtKey);
 
@@ -389,9 +376,7 @@ export class ProcessingService {
       };
 
     } catch (error) {
-      // ROLLBACK
-      await queryRunner.rollbackTransaction();
-      this.logger.error(`Split failed. Rolling back database. Error: ${error}`);
+      this.logger.error(`Split failed. Error: ${error}`);
 
       // Cleanup S3: Musimy posprzątać pliki, które udało się wgrać, bo baza ich nie widzi
       this.logger.log('Cleaning up orphaned S3 files due to failure...');
@@ -400,8 +385,6 @@ export class ProcessingService {
       }
 
       throw error;
-    } finally {
-      await queryRunner.release();
     }
   }
   

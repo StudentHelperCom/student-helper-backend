@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, DataSource } from 'typeorm';
 import { Topic } from '../entities/topic.entity.js';
 
 @Injectable()
@@ -8,6 +8,7 @@ export class TopicsRepository {
   constructor(
     @InjectRepository(Topic)
     private readonly repo: Repository<Topic>,
+    private readonly dataSource: DataSource,
   ) {}
 
   // --- Methods from Processing Service ---
@@ -42,6 +43,28 @@ export class TopicsRepository {
     return this.repo.find({
       where: { class: { classID: classId } },
       order: { createdAt: 'ASC' },
+    });
+  }
+
+  /**
+   * TRANSACTIONAL: Replace all topics for a class atomically.
+   * Deletes old topics and saves new ones within a single transaction.
+   * Returns array of uploaded S3 keys in case rollback is needed.
+   */
+  async replaceTopicsForClassTransactional(
+    classId: string,
+    topicEntities: Topic[]
+  ): Promise<Topic[]> {
+    return this.dataSource.transaction(async (manager) => {
+      // Delete old topics
+      await manager.delete(Topic, { class: { classID: classId } as any });
+      
+      // Save new topics
+      if (topicEntities.length > 0) {
+        return manager.save(topicEntities);
+      }
+      
+      return [];
     });
   }
 }
