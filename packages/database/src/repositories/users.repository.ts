@@ -15,15 +15,6 @@ export class UsersRepository {
     return this.repo.findOne({ where: { email } });
   }
 
-  async createUser(userData: Partial<User>) {
-    const newUser = this.repo.create(userData);
-    return this.repo.save(newUser);
-  }
-
-  async updateLastActivity(id: string) {
-    await this.repo.update(id, { lastActivityDate: new Date() });
-  }
-
   /**
    * TRANSACTIONAL: Register user with pessimistic lock to prevent race conditions.
    * Returns created user and generated token info.

@@ -12,16 +12,8 @@ export class TopicsRepository {
   ) {}
 
   // --- Methods from Processing Service ---
-  async deleteByClassId(classId: string): Promise<void> {
-    await this.repo.delete({ class: { classID: classId } as any });
-  }
-
   create(data: Partial<Topic>): Topic {
     return this.repo.create(data);
-  }
-
-  async saveMany(topics: Topic[]): Promise<Topic[]> {
-    return this.repo.save(topics);
   }
 
   async countByClassId(classId: string): Promise<number> {
