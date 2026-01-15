@@ -6,8 +6,9 @@ import {
   InternalServerErrorException
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { DataSource } from 'typeorm';
 // ZMIANA: Importujemy UsersRepository z biblioteki zamiast lokalnego serwisu
-import { UsersRepository } from '@repo/database';
+import { UsersRepository, User } from '@repo/database';
 import { HashService } from './common/hash.service';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class AuthService {
     private readonly usersRepo: UsersRepository,
     private readonly jwtService: JwtService,
     private readonly hashService: HashService,
+    private readonly dataSource: DataSource,
   ) {}
 
   private validateCredentials(login: string, pass: string): string | null {
@@ -46,29 +48,58 @@ export class AuthService {
       throw new BadRequestException(validationError);
     }
 
-    // Hashowanie może zająć chwilę, robimy to przed próbą zapisu
-    const hashedPassword = await this.hashService.hashData(password); 
+    // Hashowanie może zająć chwilę, robimy to przed transakcją
+    const hashedPassword = await this.hashService.hashData(password);
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
     try {
-      const created = await this.usersRepo.createUser({
+      // Sprawdź czy użytkownik istnieje z pessimistic lock (zapobiega race condition)
+      const existing = await queryRunner.manager.findOne(User, {
+        where: { email },
+        lock: { mode: 'pessimistic_write' }
+      });
+
+      if (existing) {
+        throw new ConflictException('User already exists');
+      }
+
+      // Utwórz użytkownika
+      const created = queryRunner.manager.create(User, {
         email: email,
         passwordHash: hashedPassword,
         lastActivityDate: new Date(),
       });
 
+      await queryRunner.manager.save(created);
+
+      // Generuj token (jeśli to zawiedzie, rollback zapobiegnie utworzeniu użytkownika)
       const token = await this.jwtService.signAsync({
         sub: created.userID,
-        email: email, 
+        email: email,
       });
 
+      await queryRunner.commitTransaction();
       return { status: 'USER_ADDED', idu: token };
 
     } catch (error: any) {
-      // Postgres error code '23505' = unique_violation
-      if (error.code === '23505') {
-         throw new ConflictException('User already exists');
+      await queryRunner.rollbackTransaction();
+      
+      // Przekaż czytelne błędy dalej
+      if (error instanceof ConflictException) {
+        throw error;
       }
+      
+      // Postgres error code '23505' = unique_violation (backup check)
+      if (error.code === '23505') {
+        throw new ConflictException('User already exists');
+      }
+      
       throw new InternalServerErrorException('Registration failed');
+    } finally {
+      await queryRunner.release();
     }
   }
 
@@ -83,13 +114,31 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const token = await this.jwtService.signAsync({
-      sub: user.userID,
-      email: email,
-    });
+    // Transakcja zapewnia atomowość: lastActivity + token generation
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    await this.usersRepo.updateLastActivity(user.userID); 
+    try {
+      // Update last activity
+      await queryRunner.manager.update(User, user.userID, { 
+        lastActivityDate: new Date() 
+      });
 
-    return { status: 'SUCCESS', idu: token };
+      // Generuj token (jeśli to zawiedzie, rollback cofnie update)
+      const token = await this.jwtService.signAsync({
+        sub: user.userID,
+        email: email,
+      });
+
+      await queryRunner.commitTransaction();
+      return { status: 'SUCCESS', idu: token };
+
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw new InternalServerErrorException('Login failed');
+    } finally {
+      await queryRunner.release();
+    }
   }
 }

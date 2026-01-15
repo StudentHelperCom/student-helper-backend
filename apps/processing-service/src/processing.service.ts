@@ -23,6 +23,7 @@ export class ProcessingService {
   async executeFullWorkflow(classId: string) {
     this.logger.log(`=== STARTING FULL WORKFLOW FOR CLASS ID: ${classId} ===`);
 
+    // Pre-cleanup: Usuwamy tylko jeśli folder istnieje
     this.logger.log(`Ensuring clean state for ${classId}...`);
     try {
         await Promise.all([
@@ -30,27 +31,63 @@ export class ProcessingService {
             this.helpers.deleteFolderContents(`${classId}/final/`)
         ]);
     } catch (e) {
-        this.logger.warn(`Pre-cleanup warning: ${e}`);
+        this.logger.warn(`Pre-cleanup warning (non-critical): ${e}`);
     }
 
-    const processResult = await this.process(classId);
-    if (processResult.status === 'empty' || processResult.status === 'error') {
-       this.logger.warn(`Workflow stopped: ${processResult.message}`);
-       return { step: 'process', error: processResult.message };
+    // STEP 1: Process
+    let processResult;
+    try {
+      processResult = await this.process(classId);
+      if (processResult.status === 'empty' || processResult.status === 'error') {
+         this.logger.warn(`Workflow stopped at PROCESS step: ${processResult.message}`);
+         return { step: 'process', status: 'failed', error: processResult.message };
+      }
+      this.logger.log(`✓ PROCESS step completed successfully`);
+    } catch (error: any) {
+      this.logger.error(`✗ PROCESS step failed: ${error.message}`);
+      return { step: 'process', status: 'failed', error: error.message };
     }
 
-    const mergeResult = await this.mergeFinalPdfsS3(classId);
-    if (mergeResult.status === 'error') {
-       return { step: 'merge', error: mergeResult.message };
+    // STEP 2: Merge
+    let mergeResult;
+    try {
+      mergeResult = await this.mergeFinalPdfsS3(classId);
+      if (mergeResult.status === 'error') {
+         this.logger.error(`Workflow stopped at MERGE step: ${mergeResult.message}`);
+         // Compensating action: Cleanup processed files
+         await this.helpers.deleteFolderContents(`${classId}/processed/`).catch(e => 
+           this.logger.warn(`Compensating cleanup failed: ${e}`)
+         );
+         return { step: 'merge', status: 'failed', error: mergeResult.message };
+      }
+      this.logger.log(`✓ MERGE step completed successfully`);
+    } catch (error: any) {
+      this.logger.error(`✗ MERGE step failed: ${error.message}`);
+      // Compensating action: Cleanup processed files
+      await this.helpers.deleteFolderContents(`${classId}/processed/`).catch(e => 
+        this.logger.warn(`Compensating cleanup failed: ${e}`)
+      );
+      return { step: 'merge', status: 'failed', error: error.message };
     }
-    const splitResult = await this.splitMergedPdf(classId);
 
-    this.logger.log(`Work complete. cleaning up intermediate files for ${classId}...`);
+    // STEP 3: Split
+    let splitResult;
+    try {
+      splitResult = await this.splitMergedPdf(classId);
+      this.logger.log(`✓ SPLIT step completed successfully`);
+    } catch (error: any) {
+      this.logger.error(`✗ SPLIT step failed: ${error.message}`);
+      // Split ma własny rollback wewnątrz (transakcja), więc nie musimy tu robić cleanup
+      return { step: 'split', status: 'failed', error: error.message };
+    }
+
+    // Post-cleanup: Tylko intermediate files
+    this.logger.log(`Workflow complete. Cleaning up intermediate files for ${classId}...`);
     try {
         await this.helpers.deleteFolderContents(`${classId}/processed/`);
-        this.logger.log('Cleanup successful (Intermediate files removed).');
+        this.logger.log('✓ Post-cleanup successful (Intermediate files removed).');
     } catch (error: any) {
-        this.logger.warn(`Cleanup failed (non-critical): ${error.message}`);
+        this.logger.warn(`Post-cleanup warning (non-critical): ${error.message}`);
     }
 
     this.logger.log(`=== FULL WORKFLOW COMPLETE FOR ${classId} ===`);
@@ -185,14 +222,21 @@ export class ProcessingService {
     const finalPdfKey = `${rootFolderPrefix}Final_Merged_${classId}.pdf`;
     const finalTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
-    this.logger.log(`Cleaning up intermediate AI files...`);
-    await this.helpers.deleteFolderContents(finalSubfolderPrefix); 
-
+    // KRYTYCZNE: Upload PRZED delete, aby zapobiec utracie danych przy błędzie
     this.logger.log(`Uploading final merged files...`);
     await Promise.all([
         this.helpers.uploadFile(finalPdfKey, finalPdfBuffer, 'application/pdf'),
         this.helpers.uploadFile(finalTxtKey, finalTxtBuffer, 'text/plain; charset=utf-8')
     ]);
+
+    // Dopiero po sukcesie uploadu - cleanup intermediate files
+    this.logger.log(`Cleaning up intermediate AI files...`);
+    try {
+      await this.helpers.deleteFolderContents(finalSubfolderPrefix);
+    } catch (cleanupError: any) {
+      // Nie blokujemy sukcesu operacji, jeśli cleanup zawiedzie (pliki zostają, ale merged jest OK)
+      this.logger.warn(`Cleanup warning (non-critical): ${cleanupError.message}`);
+    }
 
     return {
       status: 'ok',
