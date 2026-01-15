@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common';
-import { CdnService } from './cdn.service.js';
-import { CdnController } from './cdn.controller.js';
+import { CdnService } from './cdn.service';
+import { CdnController } from './cdn.controller';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { Class, User, Topic, SharedDatabaseModule } from '@repo/database';
+import { SharedDatabaseModule } from '@repo/database'; 
 import { cdnConfigSchema } from '@repo/common';
 
 @Module({
@@ -18,7 +17,6 @@ import { cdnConfigSchema } from '@repo/common';
       envFilePath: '.env',
     }),
     SharedDatabaseModule.forRoot(),
-    TypeOrmModule.forFeature([User, Class, Topic]),
   ],
 })
 export class CdnModule {}

@@ -10,3 +10,7 @@ export * from './database.module.js';
 export const CLASS_REPOSITORY = 'CLASS_REPOSITORY';
 export const TOPIC_REPOSITORY = 'TOPIC_REPOSITORY';
 export const USER_REPOSITORY = 'USER_REPOSITORY';
+
+export * from './repositories/users.repository.js';
+export * from './repositories/topics.repository.js';
+export * from './repositories/classes.repository.js';

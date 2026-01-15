@@ -2,10 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ProcessingHelpers } from './helpers/processing.helpers';
 import * as path from 'path';
 import { ProcessingAi } from './helpers/processing.ai';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Topic } from '@repo/database';
 import { randomUUID } from 'crypto';
+import { TopicsRepository } from '@repo/database';
+import { DataSource } from 'typeorm';
+import { Topic } from '@repo/database';
 
 const BATCH_SIZE = 3;
 
@@ -16,12 +16,22 @@ export class ProcessingService {
   constructor(
     private readonly helpers: ProcessingHelpers,
     private readonly aiService: ProcessingAi,
-    @InjectRepository(Topic) 
-    private topicsRepository: Repository<Topic>,
+    private readonly topicsRepo: TopicsRepository,
+    private readonly dataSource: DataSource
   ) {}
 
   async executeFullWorkflow(classId: string) {
     this.logger.log(`=== STARTING FULL WORKFLOW FOR CLASS ID: ${classId} ===`);
+
+    this.logger.log(`Ensuring clean state for ${classId}...`);
+    try {
+        await Promise.all([
+            this.helpers.deleteFolderContents(`${classId}/processed/`),
+            this.helpers.deleteFolderContents(`${classId}/final/`)
+        ]);
+    } catch (e) {
+        this.logger.warn(`Pre-cleanup warning: ${e}`);
+    }
 
     const processResult = await this.process(classId);
     if (processResult.status === 'empty' || processResult.status === 'error') {
@@ -56,7 +66,6 @@ export class ProcessingService {
   async process(classId: string) {
     const uploadsPrefix = `${classId}/uploads/`;
 
-    // Używamy listFiles (zwraca wszystko) i filtrujemy tutaj
     let allFiles = await this.helpers.listFiles(uploadsPrefix);
 
     const sourceFiles = allFiles.filter(key => 
@@ -140,8 +149,6 @@ export class ProcessingService {
     this.logger.log(`Listing files to merge from: ${finalSubfolderPrefix}`);
 
     const allFiles = await this.helpers.listFiles(finalSubfolderPrefix);
-
-    // FILTRACJA: Bierzemy tylko PDFy jako "kotwice", żeby nie dublować (bo TXT i tak pobierzemy w pętli)
     const s3PdfFiles = allFiles.filter(key => key.endsWith('.pdf'));
 
     if (!s3PdfFiles.length) {
@@ -154,10 +161,8 @@ export class ProcessingService {
     
     const textContents = await Promise.all(s3PdfFiles.map(async (pdfKey) => {
         try {
-            // Zamieniamy .pdf na .txt, aby pobrać treść tekstową
             const txtKey = pdfKey.replace('.pdf', '.txt');
             const txtBuffer = await this.helpers.getFile(txtKey);
-            // Dodajemy nagłówek, żeby AI wiedziało co to za plik (opcjonalnie)
             return `\n\n=== CONTENT FROM PART ${path.basename(pdfKey, '.pdf')} ===\n${txtBuffer.toString()}`;
         } catch (error) {
             this.logger.error(`Error getting text content for ${pdfKey}:`, error);
@@ -224,7 +229,6 @@ export class ProcessingService {
     let currentTopicString = ''; 
     let currentTopicName = '';
     let currentContent: string[] = [];
-    const literatureKeywords = ['bibliografia', 'literatura', 'źródła', 'wykaz', 'references', 'bibliography'];
     let isInsideLiterature = false;
 
     for (const line of lines) {
@@ -281,52 +285,84 @@ export class ProcessingService {
         return { ...t, name: uniqueName };
     });
 
-    const generatedFiles: string[] = [];
+ const generatedFiles: string[] = [];
     const topicEntities: Topic[] = [];
-
-    this.logger.log(`Cleaning up old topics for class ${classId}...`);
-    await this.topicsRepository.delete({ class: { classID: classId } as any });
-
-    const uploadPromises = finalTopics.map(async (topic) => {
-      const newTopicId = randomUUID(); 
-
-      const fileName = `${newTopicId}.pdf`; 
-      const finalKey = `${rootFolderPrefix}${fileName}`;
-      
-      const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId);
-      await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
-      generatedFiles.push(finalKey);
-      
-      const newTopic = this.topicsRepository.create({
-          topicID: newTopicId,         
-          name: topic.name,         
-          class: { classID: classId } as any,
-      });
-      
-      topicEntities.push(newTopic);
-    });
-
-    await Promise.all(uploadPromises);
     
-    if (topicEntities.length > 0) {
-        await this.topicsRepository.save(topicEntities);
-        this.logger.log(`Successfully saved ${topicEntities.length} new topics.`);
+    // START TRANSAKCJI
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      this.logger.log(`Generating PDFs and uploading to S3...`);
+
+      // 1. Najpierw generujemy i uploadujemy WSZYSTKIE pliki do S3.
+      // Jeśli cokolwiek tutaj zawiedzie, nie dotykamy bazy danych.
+      const uploadPromises = finalTopics.map(async (topic) => {
+        const newTopicId = randomUUID(); 
+        const fileName = `${newTopicId}.pdf`; 
+        const finalKey = `${rootFolderPrefix}${fileName}`;
+        
+        const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId);
+        await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
+        
+        generatedFiles.push(finalKey); // Zbieramy klucze, żeby je usunąć w razie rollbacku
+        
+        // Przygotowujemy encję (ale jeszcze nie zapisujemy)
+        const newTopic = queryRunner.manager.create(Topic, {
+            topicID: newTopicId,         
+            name: topic.name,         
+            class: { classID: classId } as any,
+        });
+        topicEntities.push(newTopic);
+      });
+
+      await Promise.all(uploadPromises);
+
+      // 2. Operacje na bazie danych (Atomowe zamienienie starych na nowe)
+      this.logger.log(`Updating database topics for class ${classId}...`);
+      
+      // Usuń stare
+      await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
+      
+      // Zapisz nowe
+      if (topicEntities.length > 0) {
+        await queryRunner.manager.save(topicEntities);
+      }
+
+      // 3. Commit
+      await queryRunner.commitTransaction();
+      this.logger.log(`Successfully split and saved ${topicEntities.length} new topics.`);
+
+      // 4. Cleanup (po sukcesie)
+      this.logger.log('Deleting merged TXT file...');
+      await this.helpers.deleteFile(mergedTxtKey);
+
+      return {
+          status: 'ok',
+          message: `Split done. Topics saved using UUIDs as filenames.`,
+          files: generatedFiles
+      };
+
+    } catch (error) {
+      // ROLLBACK
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`Split failed. Rolling back database. Error: ${error}`);
+
+      // Cleanup S3: Musimy posprzątać pliki, które udało się wgrać, bo baza ich nie widzi
+      this.logger.log('Cleaning up orphaned S3 files due to failure...');
+      for (const key of generatedFiles) {
+          await this.helpers.deleteFile(key).catch(e => this.logger.warn(`Failed to delete orphan ${key}: ${e}`));
+      }
+
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    this.logger.log('Deleting merged TXT file...');
-    await this.helpers.deleteFile(mergedTxtKey);
-
-    return {
-        status: 'ok',
-        message: `Split done. Topics saved using UUIDs as filenames.`,
-        files: generatedFiles
-    };
   }
   
   async checkStatus(classId: string) {
-    const topicCount = await this.topicsRepository.count({ 
-        where: { class: { classID: classId } as any } 
-    });
+    const topicCount = await this.topicsRepo.countByClassId(classId);
 
     if (topicCount === 0) {
         return { isComplete: false, reason: 'No topics generated yet' };

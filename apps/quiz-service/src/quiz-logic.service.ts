@@ -1,19 +1,25 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 
 @Injectable()
 export class QuizLogicService {
   private readonly logger = new Logger(QuizLogicService.name);
-  private bucket = process.env.AWS_S3_BUCKET!;
+  private readonly bucket: string;
+  private readonly s3: S3Client;
 
-  private s3 = new S3Client({
-    region: process.env.AWS_REGION!,
-    credentials: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-    },
-  });
+  constructor(private readonly configService: ConfigService) {
+    this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
+    
+    this.s3 = new S3Client({
+      region: this.configService.getOrThrow<string>('AWS_REGION'),
+      credentials: {
+        accessKeyId: this.configService.getOrThrow<string>('AWS_ACCESS_KEY_ID'),
+        secretAccessKey: this.configService.getOrThrow<string>('AWS_SECRET_ACCESS_KEY'),
+      },
+    });
+  }
 
   async getTopicContent(classId: string, topicRandomId: string): Promise<string> {
     const key = `${classId}/${topicRandomId}.pdf`;

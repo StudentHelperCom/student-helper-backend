@@ -2,16 +2,18 @@ import {
   ConflictException, 
   Injectable, 
   UnauthorizedException, 
-  BadRequestException // <--- Added this import
+  BadRequestException, 
+  InternalServerErrorException
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { UsersService } from './users/users.service';
+// ZMIANA: Importujemy UsersRepository z biblioteki zamiast lokalnego serwisu
+import { UsersRepository } from '@repo/database';
 import { HashService } from './common/hash.service';
 
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly usersService: UsersService,
+    private readonly usersRepo: UsersRepository,
     private readonly jwtService: JwtService,
     private readonly hashService: HashService,
   ) {}
@@ -44,29 +46,34 @@ export class AuthService {
       throw new BadRequestException(validationError);
     }
 
-    const existingUser = await this.usersService.findByEmail(email); 
-    if (existingUser) {
-      throw new ConflictException('User already exists');
-    }
-
+    // Hashowanie może zająć chwilę, robimy to przed próbą zapisu
     const hashedPassword = await this.hashService.hashData(password); 
 
-    const created = await this.usersService.createUser({
-      email: email,
-      passwordHash: hashedPassword,
-      lastActivityDate: new Date(),
-    });
+    try {
+      const created = await this.usersRepo.createUser({
+        email: email,
+        passwordHash: hashedPassword,
+        lastActivityDate: new Date(),
+      });
 
-    const token = await this.jwtService.signAsync({
-      sub: created.userID,
-      email: email, 
-    });
+      const token = await this.jwtService.signAsync({
+        sub: created.userID,
+        email: email, 
+      });
 
-    return { status: 'USER_ADDED', idu: token };
+      return { status: 'USER_ADDED', idu: token };
+
+    } catch (error: any) {
+      // Postgres error code '23505' = unique_violation
+      if (error.code === '23505') {
+         throw new ConflictException('User already exists');
+      }
+      throw new InternalServerErrorException('Registration failed');
+    }
   }
 
   async login(email: string, password: string) {    
-    const user = await this.usersService.findByEmail(email); 
+    const user = await this.usersRepo.findByEmail(email); 
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
@@ -81,7 +88,7 @@ export class AuthService {
       email: email,
     });
 
-    await this.usersService.updateLastActivity(user.userID); 
+    await this.usersRepo.updateLastActivity(user.userID); 
 
     return { status: 'SUCCESS', idu: token };
   }

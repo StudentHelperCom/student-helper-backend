@@ -1,11 +1,30 @@
-import { Module, DynamicModule } from '@nestjs/common';
+import { Module, DynamicModule, Global } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { User } from './entities/user.entity.js';
 import { Class } from './entities/class.entity.js';
 import { Topic } from './entities/topic.entity.js';
+import { TopicsRepository } from './repositories/topics.repository.js';
+import { ClassesRepository } from './repositories/classes.repository.js';
+import { UsersRepository } from './repositories/users.repository.js';
 
-@Module({})
+@Global()
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([User, Class, Topic]),
+  ],
+  providers: [
+    UsersRepository,
+    TopicsRepository,
+    ClassesRepository,
+  ],
+  exports: [
+    UsersRepository,
+    TopicsRepository,
+    ClassesRepository,
+    TypeOrmModule, 
+  ],
+})
 export class SharedDatabaseModule {
   static forRoot(): DynamicModule {
     return {
@@ -30,7 +49,6 @@ export class SharedDatabaseModule {
           }),
         }),
       ],
-      exports: [TypeOrmModule],
     };
   }
 }
