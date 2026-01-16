@@ -15,6 +15,13 @@ export class QuizService {
   ) {}
 
   private async fetchCombinedContent(topicIds: string[]): Promise<{ content: string, count: number }> {
+    // --- FIX START: Validate Input Before DB Call ---
+    if (!topicIds || !Array.isArray(topicIds) || topicIds.length === 0) {
+        this.logger.warn('fetchCombinedContent called with empty or invalid topicIds');
+        throw new BadRequestException('No topic IDs provided for content generation.');
+    }
+    // --- FIX END ---
+
     // 1. Fetch from DB using Repository
     const topics = await this.topicsRepo.findByIds(topicIds);
 

@@ -8,6 +8,13 @@ import { Topic } from '@repo/database';
 
 const BATCH_SIZE = 3;
 
+// Interface for our status file stored in S3
+interface ProcessingStatus {
+  state: 'processing' | 'completed' | 'partial_error' | 'failed';
+  timestamp: string;
+  details?: any;
+}
+
 @Injectable()
 export class ProcessingService {
   private readonly logger = new Logger(ProcessingService.name);
@@ -18,8 +25,31 @@ export class ProcessingService {
     private readonly topicsRepo: TopicsRepository
   ) {}
 
+  // --- NEW HELPER: Update Status Marker in S3 ---
+  private async updateStatusMarker(classId: string, state: ProcessingStatus['state'], details?: any) {
+    const statusKey = `${classId}/status.json`;
+    const statusData: ProcessingStatus = {
+        state,
+        timestamp: new Date().toISOString(),
+        details
+    };
+    try {
+        await this.helpers.uploadFile(
+            statusKey, 
+            Buffer.from(JSON.stringify(statusData), 'utf-8'), 
+            'application/json'
+        );
+    } catch (e) {
+        this.logger.warn(`Failed to update status marker: ${e}`);
+    }
+  }
+  // ----------------------------------------------
+
   async executeFullWorkflow(classId: string) {
     this.logger.log(`[Workflow] Starting execution for class ID: ${classId}`);
+    
+    // 1. Mark as PROCESSING start
+    await this.updateStatusMarker(classId, 'processing');
 
     this.logger.log(`[Workflow] Ensuring clean state (final folder) for ${classId}`);
     try {
@@ -33,13 +63,17 @@ export class ProcessingService {
       this.logger.log(`[Step 1] Starting batch processing...`);
       processResult = await this.process(classId);
       
-      if (processResult.status !== 'batch_complete') {
-         this.logger.error(`[Step 1] Failed. Status: ${processResult.status}. Msg: ${processResult.message}`);
+      if (processResult.status !== 'batch_complete' && processResult.status !== 'partial_error') {
+         // Critical failure in processing logic
+         const msg = `[Step 1] Failed. Status: ${processResult.status}. Msg: ${processResult.message}`;
+         this.logger.error(msg);
+         await this.updateStatusMarker(classId, 'failed', { error: msg });
          return { step: 'process', status: 'failed', error: processResult.message };
       }
-      this.logger.log(`[Step 1] Completed successfully.`);
+      this.logger.log(`[Step 1] Completed. Status: ${processResult.status}`);
     } catch (error: any) {
-      this.logger.error(`[Step 1] Failed: ${error.message}`);
+      this.logger.error(`[Step 1] Exception: ${error.message}`);
+      await this.updateStatusMarker(classId, 'failed', { error: error.message });
       return { step: 'process', status: 'failed', error: error.message };
     }
 
@@ -48,12 +82,15 @@ export class ProcessingService {
       this.logger.log(`[Step 2] Starting merge...`);
       mergeResult = await this.mergeFinalPdfsS3(classId);
       if (mergeResult.status === 'error') {
-         this.logger.error(`[Step 2] Failed: ${mergeResult.message}`);
+         const msg = `[Step 2] Failed: ${mergeResult.message}`;
+         this.logger.error(msg);
+         await this.updateStatusMarker(classId, 'failed', { error: msg });
          return { step: 'merge', status: 'failed', error: mergeResult.message };
       }
       this.logger.log(`[Step 2] Completed successfully.`);
     } catch (error: any) {
-      this.logger.error(`[Step 2] Failed: ${error.message}`);
+      this.logger.error(`[Step 2] Exception: ${error.message}`);
+      await this.updateStatusMarker(classId, 'failed', { error: error.message });
       return { step: 'merge', status: 'failed', error: error.message };
     }
 
@@ -63,7 +100,8 @@ export class ProcessingService {
       splitResult = await this.splitMergedPdf(classId);
       this.logger.log(`[Step 3] Completed successfully.`);
     } catch (error: any) {
-      this.logger.error(`[Step 3] Failed: ${error.message}`);
+      this.logger.error(`[Step 3] Exception: ${error.message}`);
+      await this.updateStatusMarker(classId, 'failed', { error: error.message });
       return { step: 'split', status: 'failed', error: error.message };
     }
 
@@ -75,14 +113,79 @@ export class ProcessingService {
         this.logger.warn(`[Workflow] Post-cleanup warning: ${error.message}`);
     }
 
-    this.logger.log(`[Workflow] Execution complete for ${classId}`);
+    // Determine Final Status
+    const finalState = (processResult.status === 'partial_error') ? 'partial_error' : 'completed';
+    
+    await this.updateStatusMarker(classId, finalState, { 
+        processed: processResult.details?.length,
+        topics: splitResult.files?.length
+    });
+
+    this.logger.log(`[Workflow] Execution complete for ${classId}. Final State: ${finalState}`);
     
     return {
        status: 'workflow_complete',
+       finalState,
        processing: processResult,
        merging: mergeResult,
        splitting: splitResult
     };
+  }
+
+  // --- UPDATED CHECK STATUS METHOD ---
+  async checkStatus(classId: string) {
+    const statusKey = `${classId}/status.json`;
+    
+    try {
+        // 1. Try to read the explicit status file from S3
+        const statusBuffer = await this.helpers.getFile(statusKey);
+        const statusData: ProcessingStatus = JSON.parse(statusBuffer.toString('utf-8'));
+
+        // Logic Mapping
+        switch (statusData.state) {
+            case 'completed':
+                return { 
+                    isComplete: true, 
+                    status: 'success', 
+                    details: 'Workflow completed successfully.' 
+                };
+            case 'partial_error':
+                return { 
+                    isComplete: true, // It is technically "done", just not perfectly
+                    status: 'partial_error', 
+                    details: 'Workflow completed but some files failed to process.' 
+                };
+            case 'failed':
+                return { 
+                    isComplete: true, // It stopped running
+                    status: 'failed', 
+                    details: statusData.details?.error || 'Workflow failed.' 
+                };
+            case 'processing':
+                return { 
+                    isComplete: false, 
+                    status: 'processing', 
+                    details: 'Workflow is currently running.' 
+                };
+        }
+    } catch (e) {
+        // 2. Fallback (if status.json doesn't exist yet or was deleted)
+        // We use the old logic as a backup
+        const topicCount = await this.topicsRepo.countByClassId(classId);
+        
+        if (topicCount > 0) {
+            return { isComplete: true, status: 'success', details: 'Topics found (Legacy check).' };
+        }
+
+        const uploadsPrefix = `${classId}/uploads/`;
+        const hasUploads = await this.helpers.isFolderNotEmpty(uploadsPrefix);
+        
+        if (hasUploads) {
+            return { isComplete: false, status: 'processing', details: 'Files found but no status marker.' };
+        }
+
+        return { isComplete: false, status: 'empty', details: 'No files or status found.' };
+    }
   }
 
   async process(classId: string) {
@@ -122,12 +225,14 @@ export class ProcessingService {
     }
 
     if (failureCount > 0) {
+        // Return details but don't crash, allowing the workflow to proceed to Merge/Split for the files that succeeded
         return { status: 'partial_error', message: `${failureCount} files failed to process`, details: results };
     }
 
     return { status: 'batch_complete', details: results };
   }
 
+  // ... (Rest of your methods: processSingleFile, mergeFinalPdfsS3, splitMergedPdf remain exactly the same)
   private async processSingleFile(classId: string, fileKey: string) {
     const ext = path.extname(fileKey).toLowerCase();
     const baseName = path.basename(fileKey, ext);
@@ -379,31 +484,5 @@ export class ProcessingService {
 
       throw error;
     }
-  }
-  
-  async checkStatus(classId: string) {
-    const topicCount = await this.topicsRepo.countByClassId(classId);
-
-    if (topicCount === 0) {
-        return { isComplete: false, reason: 'No topics generated yet' };
-    }
-
-    const finalMergedKey = `${classId}/Final_Merged_${classId}.pdf`;
-    const hasMergedPdf = await this.helpers.checkFileExists(finalMergedKey);
-
-    if (!hasMergedPdf) {
-        return { isComplete: false, reason: 'Final merged PDF missing' };
-    }
-
-    const uploadsPrefix = `${classId}/uploads/`;
-    const hasUploads = await this.helpers.isFolderNotEmpty(uploadsPrefix);
-    return { 
-        isComplete: true, 
-        stats: {
-            topicsCount: topicCount,
-            hasMergedPdf: true,
-            hasUploads: true
-        }
-    };
   }
 }

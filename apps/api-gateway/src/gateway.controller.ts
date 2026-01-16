@@ -294,6 +294,24 @@ export class QuizController {
   @Post('evaluate')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Evaluate open-ended answers via AI' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['topicIds', 'answers'],
+      properties: {
+        topicIds: { 
+          type: 'array', 
+          items: { type: 'string', format: 'uuid' },
+          example: ['550e8400-e29b-41d4-a716-446655440000']
+        },
+        answers: { 
+          type: 'array',
+          items: { type: 'object' },
+          example: [{ questionId: 1, answer: "My answer" }]
+        }
+      }
+    }
+  })
   async evaluateQuiz(@Body() body: { topicIds: string[]; answers: any[] }) {
     const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/evaluate`;
 

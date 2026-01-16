@@ -163,7 +163,6 @@ export class CdnService {
     } catch (error) {
       this.logger.error(`[ERROR] File processing failed. Reason: ${error}`);
 
-      // Rollback S3 keys for THIS file only
       if (s3KeysCreated.length > 0) {
         await Promise.all(s3KeysCreated.map(key => 
           this.s3.send(new DeleteObjectsCommand({
@@ -180,8 +179,7 @@ export class CdnService {
       }
     }
   }
-  
-  // --- EXISTING METHODS BELOW ---
+
 
   async createClass(userId: string, data: CreateClassDto) {
     const queryRunner = this.dataSource.createQueryRunner();
