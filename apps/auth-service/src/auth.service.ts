@@ -51,7 +51,7 @@ export class AuthService {
 
     try {
       // Repository handles transaction with pessimistic lock
-      const created = await this.usersRepo.registerUserTransactional({
+      const created = await this.usersRepo.register({
         email,
         passwordHash: hashedPassword,
       });
@@ -98,7 +98,7 @@ export class AuthService {
       });
 
       // Repository handles transaction for activity update
-      await this.usersRepo.updateLastActivityTransactional(user.userID);
+      await this.usersRepo.updateLastActivity(user.userID);
 
       return { status: 'SUCCESS', idu: token };
 

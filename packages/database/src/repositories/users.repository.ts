@@ -16,10 +16,10 @@ export class UsersRepository {
   }
 
   /**
-   * TRANSACTIONAL: Register user with pessimistic lock to prevent race conditions.
-   * Returns created user and generated token info.
+   * Register user with pessimistic lock to prevent race conditions.
+   * Returns created user. Runs in transaction.
    */
-  async registerUserTransactional(userData: {
+  async register(userData: {
     email: string;
     passwordHash: string;
   }): Promise<User> {
@@ -46,10 +46,10 @@ export class UsersRepository {
   }
 
   /**
-   * TRANSACTIONAL: Update last activity date atomically.
-   * Ensures consistency between activity update and subsequent operations.
+   * Update last activity date atomically.
+   * Runs in transaction.
    */
-  async updateLastActivityTransactional(userId: string): Promise<void> {
+  async updateLastActivity(userId: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       await manager.update(User, userId, {
         lastActivityDate: new Date(),
