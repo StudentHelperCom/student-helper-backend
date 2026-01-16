@@ -51,8 +51,8 @@ export class CdnService implements OnModuleInit {
     this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
   }
 
+  // --- CHANGED: Only cleans local temp storage, never touches S3 on startup ---
   async onModuleInit() {
-    // 1. Clean Local Temp Storage
     try {
       await fs.access(this.rootTempDir);
       const files = await fs.readdir(this.rootTempDir);
@@ -63,15 +63,6 @@ export class CdnService implements OnModuleInit {
     } catch {
       await fs.mkdir(this.rootTempDir, { recursive: true });
       this.logger.log(`[LOCAL] CDN temp storage initialized: ${this.rootTempDir}`);
-    }
-
-    // 2. Clean S3 Storage (Delete all class content)
-    try {
-      this.logger.log(`[S3] Starting global cleanup of S3 bucket...`);
-      await this.deleteS3Folder(''); 
-      this.logger.log(`[S3] Bucket emptied successfully.`);
-    } catch (error) {
-      this.logger.error(`[S3] Failed to empty bucket on startup: ${error}`);
     }
   }
 
@@ -92,7 +83,7 @@ export class CdnService implements OnModuleInit {
     try {
       this.logger.log(`[START] Processing file: ${sanitizedFilename} for class: ${data.className}`);
 
-      // 1. DB Logic
+      // 1. DB Logic: Get or Create Class
       let classEntity = await queryRunner.manager.findOne(Class, { 
         where: { user: { userID: data.userId }, name: data.className } 
       });
@@ -106,6 +97,13 @@ export class CdnService implements OnModuleInit {
       }
       const classId = classEntity.classID;
 
+      // =======================================================================
+      //  STEP 1.5: FORCE CLEAN S3 FOLDER FOR THIS CLASS
+      //  We do this unconditionally as requested to ensure a fresh state.
+      // =======================================================================
+      this.logger.log(`[S3] Cleaning target folder for class ${classId}...`);
+      await this.deleteS3Folder(`${classId}/`);
+      
       // 2. Local Processing
       await fs.writeFile(tempFilePath, data.content);
       const ext = path.extname(sanitizedFilename).toLowerCase();
