@@ -19,38 +19,54 @@ export class CdnController {
   @Get('health')
   healthCheck() { return 'OK'; }
   
+  @Post('test-upload')
+  @ApiOperation({ summary: 'Upload batch of files ONLY (No processing triggered)' })
+  @ApiResponse({ status: 201, description: 'Files uploaded successfully.' })
+  @ApiBody({ type: [UploadFileDto] }) 
+  async uploadFilesOnly(@Body() data: UploadFileDto[]) {
+    return this.handleUploadFlow(data, false);
+  }
+
   @Post('upload')
-  @ApiOperation({ summary: 'Upload batch of files' })
+  @ApiOperation({ summary: 'Upload batch of files AND Trigger Processing' })
   @ApiResponse({ status: 201, description: 'Files uploaded and processing started.' })
   @ApiBody({ type: [UploadFileDto] }) 
-  async uploadFiles(@Body() data: UploadFileDto[]) {
-    
+  async uploadAndProcess(@Body() data: UploadFileDto[]) {
+    return this.handleUploadFlow(data, true);
+  }
+  
+  private async handleUploadFlow(data: UploadFileDto[], shouldProcess: boolean) {
     if (!data || data.length === 0) {
         throw new BadRequestException('No file data provided');
     }
 
+    const { userId, className } = data[0]!; 
     const results: any[] = [];
-    const { userId } = data[0]!; 
 
+    // 1. PREPARE ENVIRONMENT ONCE (Cleans S3, Creates Class)
+    const classId = await this.cdnService.prepareUploadEnvironment(userId, className);
+
+    // 2. SAVE ALL FILES (Using the classId we just prepared)
     for (const file of data) {
       const buffer = Buffer.from(file.content, 'base64');
       results.push(
         await this.cdnService.saveFile({
           filename: file.filename,
           content: buffer,
-          userId: file.userId,
-          className: file.className,
+          classId: classId, // Pass the ID directly
         })
       );
     }
 
-    const classId = results[0].classId;
-    this.triggerProcessing(userId, classId); 
+    // 3. CONDITIONAL PROCESSING TRIGGER
+    if (shouldProcess) {
+        this.triggerProcessing(userId, classId);
+    }
 
     return { 
         uploadStatus: 'success', 
         filesSaved: results.length,
-        processingStarted: true,
+        processingStarted: shouldProcess,
         details: results 
     };
   }
@@ -69,6 +85,10 @@ export class CdnController {
           this.logger.error(`Failed to trigger processing: ${error.message}`);
       }
   }
+
+  // ===========================================================================
+  // OTHER ENDPOINTS
+  // ===========================================================================
 
   @Post('create-class')
   @ApiOperation({ summary: 'Create or Update a class' })

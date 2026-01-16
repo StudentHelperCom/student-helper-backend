@@ -61,10 +61,13 @@ export class CdnController {
       return response.data;
   }
   
-  @Post('upload')
+  // -----------------------------------------------------------------------
+  // ENDPOINT 1: UPLOAD ONLY (Does NOT trigger processing)
+  // -----------------------------------------------------------------------
+  @Post('test-upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files', 10))
-  @ApiOperation({ summary: 'Upload files to Class' })
+  @ApiOperation({ summary: 'Upload files ONLY (Does not start AI processing)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -76,13 +79,52 @@ export class CdnController {
       },
     },
   })
-  async uploadFiles(
+  async uploadFilesOnly(
     @UploadedFiles() files: Express.Multer.File[], 
     @Body() body: { className: string }, 
     @Req() req
   ) {
     const user = req.user;
-    const cdnUrl = `${process.env.CDN_URL!}/cdn/upload`;
+    // Points to the pure upload endpoint in CDN
+    const cdnUrl = `${process.env.CDN_URL!}/cdn/test-upload`; 
+
+    const payload = files.map(file => ({
+      filename: file.originalname,
+      content: file.buffer.toString('base64'),
+      userId: user.userId,
+      className: body.className,
+    }));
+
+    const response = await firstValueFrom(this.httpService.post(cdnUrl, payload));
+    return response.data;
+  }
+
+  // -----------------------------------------------------------------------
+  // ENDPOINT 2: UPLOAD AND PROCESS (Legacy behavior)
+  // -----------------------------------------------------------------------
+  @Post('upload')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('files', 10))
+  @ApiOperation({ summary: 'Upload files AND auto-start AI processing' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['className', 'files'], 
+      properties: {
+        className: { type: 'string' },
+        files: { type: 'array', items: { type: 'string', format: 'binary' } },
+      },
+    },
+  })
+  async uploadAndProcess(
+    @UploadedFiles() files: Express.Multer.File[], 
+    @Body() body: { className: string }, 
+    @Req() req
+  ) {
+    const user = req.user;
+    // Points to the new upload-and-process endpoint in CDN
+    const cdnUrl = `${process.env.CDN_URL!}/cdn/upload`; 
 
     const payload = files.map(file => ({
       filename: file.originalname,
