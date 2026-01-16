@@ -24,12 +24,9 @@ import { ClassesRepository, TopicsRepository, Class, Topic } from '@repo/databas
 import { CreateClassDto } from '@repo/common';
 
 @Injectable()
-export class CdnService implements OnModuleInit {
+export class CdnService {
   private readonly logger = new Logger(CdnService.name);
-  
-  // Persistent root directory for files
   private rootTempDir = path.join(process.cwd(), 'cdn_temp_storage');
-  
   private readonly s3: S3Client;
   private readonly bucket: string;
 
@@ -49,8 +46,12 @@ export class CdnService implements OnModuleInit {
     this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
   }
 
-  // --- CHANGED: Only cleans local temp storage, never touches S3 on startup ---
-  async onModuleInit() {
+  /**
+   * Run this ONCE before starting the batch upload loop.
+   * It handles: Local Cleanup, DB Class Creation, and S3 Folder Cleanup.
+   */
+  async prepareUploadEnvironment(userId: string, className: string): Promise<string> {
+    // 1. Local Temp Storage Cleanup
     try {
       await fs.access(this.rootTempDir);
       const files = await fs.readdir(this.rootTempDir);
@@ -62,17 +63,6 @@ export class CdnService implements OnModuleInit {
       await fs.mkdir(this.rootTempDir, { recursive: true });
       this.logger.log(`[LOCAL] CDN temp storage initialized: ${this.rootTempDir}`);
     }
-  }
-
-  async saveFile(data: { 
-    filename: string; content: Buffer; userId: string; className: string;
-  }) {
-    const sanitizedFilename = this.sanitizeFilename(data.filename);
-    const uniquePrefix = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    const tempFilePath = path.join(this.rootTempDir, `${uniquePrefix}_${sanitizedFilename}`);
-    
-    const filesToCleanup: string[] = [tempFilePath];
-    const s3KeysCreated: string[] = [];
 
     try {
       this.logger.log(`[START] Processing file: ${sanitizedFilename} for class: ${data.className}`);
@@ -84,15 +74,42 @@ export class CdnService implements OnModuleInit {
       );
       const classId = classEntity.classID;
 
-      // =======================================================================
-      //  STEP 1.5: FORCE CLEAN S3 FOLDER FOR THIS CLASS
-      //  We do this unconditionally as requested to ensure a fresh state.
-      // =======================================================================
+      // 3. Force Clean S3 Folder (ONCE per batch)
       this.logger.log(`[S3] Cleaning target folder for class ${classId}...`);
       await this.deleteS3Folder(`${classId}/`);
-      
-      // 2. Local Processing
-      await fs.writeFile(tempFilePath, data.content);
+
+      await queryRunner.commitTransaction();
+      return classId;
+
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`[PREPARE] Failed to prepare upload environment: ${error}`);
+      throw new InternalServerErrorException('Failed to initialize upload session');
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Saves a single file. Assumes environment is already prepared.
+   * Does NOT clean S3 or Local storage aggressively.
+   */
+  async saveFile(data: { 
+    filename: string; content: Buffer; classId: string;
+  }) {
+    const { filename, content, classId } = data;
+    const sanitizedFilename = this.sanitizeFilename(filename);
+    const uniquePrefix = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const tempFilePath = path.join(this.rootTempDir, `${uniquePrefix}_${sanitizedFilename}`);
+    
+    const filesToCleanup: string[] = [tempFilePath];
+    const s3KeysCreated: string[] = [];
+
+    try {
+      this.logger.log(`[FILE] Processing: ${sanitizedFilename} for class ID: ${classId}`);
+
+      // 1. Local Processing (OCR)
+      await fs.writeFile(tempFilePath, content);
       const ext = path.extname(sanitizedFilename).toLowerCase();
       let tempTextPath: string | null = null;
       
@@ -102,12 +119,12 @@ export class CdnService implements OnModuleInit {
         tempTextPath = await this.processImage(tempFilePath, sanitizedFilename, uniquePrefix);
       }
 
-      // 3. Upload Original
+      // 2. Upload Original File to S3
       const s3OriginalKey = `${classId}/uploads/${sanitizedFilename}`;
-      await this.uploadToS3(s3OriginalKey, data.content);
+      await this.uploadToS3(s3OriginalKey, content);
       s3KeysCreated.push(s3OriginalKey);
 
-      // 4. Upload Text
+      // 3. Upload Text File to S3 (if OCR was successful)
       let s3TextKey: string | null = null;
       if (tempTextPath) {
         filesToCleanup.push(tempTextPath);
@@ -118,8 +135,6 @@ export class CdnService implements OnModuleInit {
             await this.uploadToS3(s3TextKey, Buffer.from(textContent, 'utf8'));
             s3KeysCreated.push(s3TextKey);
             this.logger.log(`[UPLOAD] Text file uploaded to: ${s3TextKey}`);
-        } else {
-            this.logger.warn(`[OCR] Warning: Generated text content is empty. Skipping text upload.`);
         }
       }
 
@@ -144,8 +159,7 @@ export class CdnService implements OnModuleInit {
           })).catch(e => this.logger.error(`S3 Rollback failed for ${key}: ${e}`))
         ));
       }
-      
-      throw new BadRequestException('Failed to process or upload file');
+      throw new BadRequestException(`Failed to process file ${filename}`);
     } finally {
       for (const filePath of filesToCleanup) {
         await fs.unlink(filePath).catch(() => {});
@@ -153,12 +167,12 @@ export class CdnService implements OnModuleInit {
     }
   }
   
+  // ... (Keep existing methods: createClass, getClassesForUser, getTopicsForClass, getFilesForClass, deleteClass) ...
   async createClass(userId: string, data: CreateClassDto) {
     try {
       // Use repository transactional method
       const saved = await this.classesRepo.create(userId, data);
       
-      // Próba utworzenia folderu w S3 po zapisie do DB
       const folderKey = `${saved.classID}/`;
       try {
         await this.uploadToS3(folderKey, Buffer.from(''));
@@ -240,7 +254,8 @@ export class CdnService implements OnModuleInit {
       throw error;
     }
   }
-  
+
+  // ... (Keep helper methods: processPdfTextOnly, processImage, sanitizeFilename, uploadToS3, getPublicUrl, deleteS3Folder) ...
   private async processPdfTextOnly(pdfPath: string, originalFilename: string, prefix: string): Promise<string> {
     const txtPath = path.join(this.rootTempDir, `${prefix}_${path.basename(originalFilename)}.txt`);
     try {
@@ -311,27 +326,16 @@ export class CdnService implements OnModuleInit {
 
   private async deleteS3Folder(prefix: string) {
     let hasContents = true;
-
     while (hasContents) {
-      const listCommand = new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: prefix, 
-      });
-
+      const listCommand = new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix });
       const listResponse = await this.s3.send(listCommand) as ListObjectsV2CommandOutput;
       
       if (!listResponse.Contents || listResponse.Contents.length === 0) {
         hasContents = false;
         break;
       }
-
       const objectsToDelete = listResponse.Contents.map(obj => ({ Key: obj.Key }));
-      
-      await this.s3.send(new DeleteObjectsCommand({
-        Bucket: this.bucket,
-        Delete: { Objects: objectsToDelete }
-      }));
-      
+      await this.s3.send(new DeleteObjectsCommand({ Bucket: this.bucket, Delete: { Objects: objectsToDelete } }));
       this.logger.log(`Deleted batch of ${objectsToDelete.length} items from S3 prefix "${prefix}"`);
     }
   }
