@@ -18,10 +18,11 @@ import {
   ListObjectsV2CommandOutput 
 } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
-import { ClassesRepository, TopicsRepository } from '@repo/database'; 
-import { CreateClassDto } from '@repo/common';
 import { DataSource } from 'typeorm';
-import { Class, Topic } from '@repo/database';
+
+// Imports for both Repositories (Reads) and Entities (Writes/Transactions)
+import { ClassesRepository, TopicsRepository, Class, Topic } from '@repo/database'; 
+import { CreateClassDto } from '@repo/common';
 
 @Injectable()
 export class CdnService implements OnModuleInit {
@@ -50,7 +51,6 @@ export class CdnService implements OnModuleInit {
     this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
   }
 
-  // --- UPDATED METHOD START ---
   async onModuleInit() {
     // 1. Clean Local Temp Storage
     try {
@@ -68,15 +68,12 @@ export class CdnService implements OnModuleInit {
     // 2. Clean S3 Storage (Delete all class content)
     try {
       this.logger.log(`[S3] Starting global cleanup of S3 bucket...`);
-      // Passing an empty string '' as prefix lists and deletes everything from the root
       await this.deleteS3Folder(''); 
       this.logger.log(`[S3] Bucket emptied successfully.`);
     } catch (error) {
       this.logger.error(`[S3] Failed to empty bucket on startup: ${error}`);
-      // Optional: throw error if the app should crash if S3 isn't clean
     }
   }
-  // --- UPDATED METHOD END ---
 
   async saveFile(data: { 
     filename: string; content: Buffer; userId: string; className: string;
@@ -174,80 +171,13 @@ export class CdnService implements OnModuleInit {
     }
   }
   
-  private async processPdfTextOnly(pdfPath: string, originalFilename: string, prefix: string): Promise<string> {
-    const txtPath = path.join(this.rootTempDir, `${prefix}_${path.basename(originalFilename)}.txt`);
-    try {
-      const pdfBuffer = await fs.readFile(pdfPath);
-      let text = '';
-      
-      try {
-        const pdfExtraction = require('pdf-extraction');
-        const data = await pdfExtraction(pdfBuffer);
-        text = data.text.trim();
-      } catch (e: any) {
-        this.logger.warn(`Standard extraction failed: ${e.message}`);
-      }
-
-      if (!text || text.length < 50) {
-        const { pdf } = await import('pdf-to-img');
-        const worker = await createWorker('eng+pol');
-        const document = await pdf(pdfPath, { scale: 2.0 }); 
-        for await (const image of document) {
-           const { data: { text: pageText } } = await worker.recognize(image);
-           text += pageText + '\n\n';
-        }
-        await worker.terminate();
-      }
-
-      await fs.writeFile(txtPath, text || "[ERROR: No text found]", 'utf8');
-      return txtPath;
-    } catch (err) {
-      throw err;
-    }
-  }
-
-  private async processImage(imagePath: string, originalFilename: string, prefix: string): Promise<string> {
-    const baseName = path.basename(originalFilename, path.extname(originalFilename));
-    const txtPath = path.join(this.rootTempDir, `${prefix}_${baseName}.txt`);
-    const worker = await createWorker('eng+pol');
-    try {
-      const { data: { text } } = await worker.recognize(imagePath);
-      await fs.writeFile(txtPath, text, 'utf8');
-      return txtPath;
-    } finally {
-      await worker.terminate();
-    }
-  }
-
-  private sanitizeFilename(filename: string): string {
-    const baseName = path.basename(filename, path.extname(filename));
-    const ext = path.extname(filename);
-    const safeName = baseName
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .substring(0, 100);
-    return safeName + ext.toLowerCase();
-  }
-
-  private async uploadToS3(key: string, content: Buffer) {
-    await this.s3.send(new PutObjectCommand({ 
-        Bucket: this.bucket, 
-        Key: key, 
-        Body: content 
-    }));
-  }
-
-  private getPublicUrl(key: string) {
-    return `https://${this.bucket}.s3.${this.configService.get<string>('AWS_REGION')}.amazonaws.com/${key}`;
-  }
-
   async createClass(userId: string, data: CreateClassDto) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
+      // Repository handles transaction with existence check
       const existingClass = await queryRunner.manager.findOne(Class, {
           where: { user: { userID: userId }, name: data.className }
       });
@@ -265,12 +195,12 @@ export class CdnService implements OnModuleInit {
 
       const saved = await queryRunner.manager.save(newClass);
       
-      // Próba utworzenia folderu w S3
+      // Próba utworzenia folderu w S3 po zapisie do DB
       const folderKey = `${saved.classID}/`;
       try {
         await this.uploadToS3(folderKey, Buffer.from(''));
       } catch (s3Error) {
-        throw new InternalServerErrorException("Failed to initialize S3 storage for class");
+         throw new InternalServerErrorException("Failed to initialize S3 storage for class");
       }
 
       await queryRunner.commitTransaction();
@@ -355,32 +285,96 @@ export class CdnService implements OnModuleInit {
       await queryRunner.rollbackTransaction();
       throw error;
     } finally {
-      await queryRunner.release();
+        await queryRunner.release();
     }
   }
   
+  private async processPdfTextOnly(pdfPath: string, originalFilename: string, prefix: string): Promise<string> {
+    const txtPath = path.join(this.rootTempDir, `${prefix}_${path.basename(originalFilename)}.txt`);
+    try {
+      const pdfBuffer = await fs.readFile(pdfPath);
+      let text = '';
+      
+      try {
+        const pdfExtraction = require('pdf-extraction');
+        const data = await pdfExtraction(pdfBuffer);
+        text = data.text.trim();
+      } catch (e: any) {
+        this.logger.warn(`Standard extraction failed: ${e.message}`);
+      }
+
+      if (!text || text.length < 50) {
+        const { pdf } = await import('pdf-to-img');
+        const worker = await createWorker('eng+pol');
+        const document = await pdf(pdfPath, { scale: 2.0 }); 
+        for await (const image of document) {
+           const { data: { text: pageText } } = await worker.recognize(image);
+           text += pageText + '\n\n';
+        }
+        await worker.terminate();
+      }
+
+      await fs.writeFile(txtPath, text || "[ERROR: No text found]", 'utf8');
+      return txtPath;
+    } catch (err) {
+      throw err;
+    }
+  }
+
+  private async processImage(imagePath: string, originalFilename: string, prefix: string): Promise<string> {
+    const baseName = path.basename(originalFilename, path.extname(originalFilename));
+    const txtPath = path.join(this.rootTempDir, `${prefix}_${baseName}.txt`);
+    const worker = await createWorker('eng+pol');
+    try {
+      const { data: { text } } = await worker.recognize(imagePath);
+      await fs.writeFile(txtPath, text, 'utf8');
+      return txtPath;
+    } finally {
+      await worker.terminate();
+    }
+  }
+
+  private sanitizeFilename(filename: string): string {
+    const baseName = path.basename(filename, path.extname(filename));
+    const ext = path.extname(filename);
+    const safeName = baseName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .substring(0, 100);
+    return safeName + ext.toLowerCase();
+  }
+
+  private async uploadToS3(key: string, content: Buffer) {
+    await this.s3.send(new PutObjectCommand({ 
+        Bucket: this.bucket, 
+        Key: key, 
+        Body: content 
+    }));
+  }
+
+  private getPublicUrl(key: string) {
+    return `https://${this.bucket}.s3.${this.configService.get<string>('AWS_REGION')}.amazonaws.com/${key}`;
+  }
+
   private async deleteS3Folder(prefix: string) {
     let hasContents = true;
 
     while (hasContents) {
-      // 1. List objects (default batch size is usually 1000)
       const listCommand = new ListObjectsV2Command({
         Bucket: this.bucket,
-        Prefix: prefix, // An empty string '' here lists the entire bucket
+        Prefix: prefix, 
       });
 
       const listResponse = await this.s3.send(listCommand) as ListObjectsV2CommandOutput;
       
-      // 2. If empty, stop
       if (!listResponse.Contents || listResponse.Contents.length === 0) {
         hasContents = false;
         break;
       }
 
-      // 3. Prepare deletion
       const objectsToDelete = listResponse.Contents.map(obj => ({ Key: obj.Key }));
       
-      // 4. Delete
       await this.s3.send(new DeleteObjectsCommand({
         Bucket: this.bucket,
         Delete: { Objects: objectsToDelete }

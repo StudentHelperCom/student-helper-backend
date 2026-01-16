@@ -4,8 +4,8 @@ import * as path from 'path';
 import { ProcessingAi } from './helpers/processing.ai';
 import { randomUUID } from 'crypto';
 import { TopicsRepository } from '@repo/database';
-import { DataSource } from 'typeorm';
 import { Topic } from '@repo/database';
+import { DataSource } from 'typeorm'; // Added missing import
 
 const BATCH_SIZE = 3;
 
@@ -17,7 +17,7 @@ export class ProcessingService {
     private readonly helpers: ProcessingHelpers,
     private readonly aiService: ProcessingAi,
     private readonly topicsRepo: TopicsRepository,
-    private readonly dataSource: DataSource
+    private readonly dataSource: DataSource // Injected DataSource
   ) {}
 
   async executeFullWorkflow(classId: string) {
@@ -348,9 +348,11 @@ export class ProcessingService {
         
         generatedFiles.push(finalKey);
         
+        // Ensure entity is created via queryRunner manager to be safe, 
+        // though strictly only save needs the transaction context.
         const newTopic = queryRunner.manager.create(Topic, {
-            topicID: newTopicId,         
-            name: topic.name,         
+            topicID: newTopicId,          
+            name: topic.name,          
             class: { classID: classId } as any,
         });
         topicEntities.push(newTopic);
@@ -360,8 +362,10 @@ export class ProcessingService {
 
       this.logger.log(`[Split] Updating database topics for class ${classId}...`);
       
+      // Delete existing topics for this class within the transaction
       await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
       
+      // Save new topics within the transaction
       if (topicEntities.length > 0) {
         await queryRunner.manager.save(topicEntities);
       }
