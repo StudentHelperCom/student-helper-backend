@@ -5,7 +5,6 @@ import { ProcessingAi } from './helpers/processing.ai';
 import { randomUUID } from 'crypto';
 import { TopicsRepository } from '@repo/database';
 import { Topic } from '@repo/database';
-import { DataSource } from 'typeorm'; // Added missing import
 
 const BATCH_SIZE = 3;
 
@@ -16,8 +15,7 @@ export class ProcessingService {
   constructor(
     private readonly helpers: ProcessingHelpers,
     private readonly aiService: ProcessingAi,
-    private readonly topicsRepo: TopicsRepository,
-    private readonly dataSource: DataSource // Injected DataSource
+    private readonly topicsRepo: TopicsRepository
   ) {}
 
   async executeFullWorkflow(classId: string) {
@@ -329,10 +327,6 @@ export class ProcessingService {
 
     const generatedFiles: string[] = [];
     const topicEntities: Topic[] = [];
-    
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
 
     try {
       this.logger.log(`[Split] Generating PDFs and uploading to S3...`);
@@ -348,9 +342,8 @@ export class ProcessingService {
         
         generatedFiles.push(finalKey);
         
-        // Ensure entity is created via queryRunner manager to be safe, 
-        // though strictly only save needs the transaction context.
-        const newTopic = queryRunner.manager.create(Topic, {
+        // Create topic entity for repository
+        const newTopic = this.topicsRepo.create({
             topicID: newTopicId,          
             name: topic.name,          
             class: { classID: classId } as any,
@@ -362,15 +355,9 @@ export class ProcessingService {
 
       this.logger.log(`[Split] Updating database topics for class ${classId}...`);
       
-      // Delete existing topics for this class within the transaction
-      await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
+      // Use repository transactional method
+      await this.topicsRepo.replaceForClass(classId, topicEntities);
       
-      // Save new topics within the transaction
-      if (topicEntities.length > 0) {
-        await queryRunner.manager.save(topicEntities);
-      }
-
-      await queryRunner.commitTransaction();
       this.logger.log(`[Split] Successfully saved ${topicEntities.length} new topics.`);
 
       this.logger.log('[Split] Deleting merged TXT file...');
@@ -383,7 +370,6 @@ export class ProcessingService {
       };
 
     } catch (error) {
-      await queryRunner.rollbackTransaction();
       this.logger.error(`[Split] Failed. Rolled back database. Error: ${error}`);
 
       this.logger.log('[Split] Cleaning up orphaned S3 files due to failure...');
@@ -392,8 +378,6 @@ export class ProcessingService {
       }
 
       throw error;
-    } finally {
-      await queryRunner.release();
     }
   }
   

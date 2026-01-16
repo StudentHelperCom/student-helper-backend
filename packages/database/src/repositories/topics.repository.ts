@@ -39,11 +39,10 @@ export class TopicsRepository {
   }
 
   /**
-   * TRANSACTIONAL: Replace all topics for a class atomically.
-   * Deletes old topics and saves new ones within a single transaction.
-   * Returns array of uploaded S3 keys in case rollback is needed.
+   * Replace all topics for a class atomically.
+   * Deletes old topics and saves new ones. Runs in transaction.
    */
-  async replaceTopicsForClassTransactional(
+  async replaceForClass(
     classId: string,
     topicEntities: Topic[]
   ): Promise<Topic[]> {

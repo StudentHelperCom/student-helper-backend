@@ -20,7 +20,7 @@ export class ClassesRepository {
     });
   }
 
-  async findAllByUserId(userId: string): Promise<Class[]> {
+  async findByUserId(userId: string): Promise<Class[]> {
     return this.repo.find({
       where: { user: { userID: userId } },
       order: { createdAt: 'DESC' },
@@ -28,10 +28,10 @@ export class ClassesRepository {
   }
 
   /**
-   * TRANSACTIONAL: Create or find class for file upload.
-   * Ensures atomic creation within transaction.
+   * Create or find class for file upload.
+   * Runs in transaction.
    */
-  async findOrCreateClassTransactional(
+  async findOrCreate(
     userId: string,
     className: string
   ): Promise<Class> {
@@ -53,10 +53,10 @@ export class ClassesRepository {
   }
 
   /**
-   * TRANSACTIONAL: Create class with existence check.
-   * Throws error if class already exists.
+   * Create class with existence check.
+   * Throws error if class already exists. Runs in transaction.
    */
-  async createClassTransactional(
+  async create(
     userId: string,
     data: CreateClassDto
   ): Promise<Class> {
@@ -81,10 +81,10 @@ export class ClassesRepository {
   }
 
   /**
-   * TRANSACTIONAL: Delete class with all related topics.
-   * Uses pessimistic lock to prevent concurrent modifications.
+   * Delete class with all related topics.
+   * Uses pessimistic lock. Runs in transaction.
    */
-  async deleteClassWithTopicsTransactional(
+  async deleteWithTopics(
     classId: string,
     userId: string
   ): Promise<{ class: Class }> {
