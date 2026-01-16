@@ -147,6 +147,7 @@ export class QuizAiService {
     {
       "results": [
         {
+          "id": "The original ID of question",
           "question": "The original question text",
           "user_answer": "The student's answer",
           "correct_answer": "The ideal answer from text",
