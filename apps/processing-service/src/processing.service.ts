@@ -21,76 +21,63 @@ export class ProcessingService {
   ) {}
 
   async executeFullWorkflow(classId: string) {
-    this.logger.log(`=== STARTING FULL WORKFLOW FOR CLASS ID: ${classId} ===`);
+    this.logger.log(`[Workflow] Starting execution for class ID: ${classId}`);
 
-    // Pre-cleanup: Usuwamy tylko jeśli folder istnieje
-    this.logger.log(`Ensuring clean state for ${classId}...`);
+    this.logger.log(`[Workflow] Ensuring clean state (final folder) for ${classId}`);
     try {
-        await Promise.all([
-            this.helpers.deleteFolderContents(`${classId}/processed/`),
-            this.helpers.deleteFolderContents(`${classId}/final/`)
-        ]);
+        await this.helpers.deleteFolderContents(`${classId}/final/`);
     } catch (e) {
-        this.logger.warn(`Pre-cleanup warning (non-critical): ${e}`);
+        this.logger.warn(`[Workflow] Pre-cleanup warning: ${e}`);
     }
 
-    // STEP 1: Process
     let processResult;
     try {
+      this.logger.log(`[Step 1] Starting batch processing...`);
       processResult = await this.process(classId);
-      if (processResult.status === 'empty' || processResult.status === 'error') {
-         this.logger.warn(`Workflow stopped at PROCESS step: ${processResult.message}`);
+      
+      if (processResult.status !== 'batch_complete') {
+         this.logger.error(`[Step 1] Failed. Status: ${processResult.status}. Msg: ${processResult.message}`);
          return { step: 'process', status: 'failed', error: processResult.message };
       }
-      this.logger.log(`✓ PROCESS step completed successfully`);
+      this.logger.log(`[Step 1] Completed successfully.`);
     } catch (error: any) {
-      this.logger.error(`✗ PROCESS step failed: ${error.message}`);
+      this.logger.error(`[Step 1] Failed: ${error.message}`);
       return { step: 'process', status: 'failed', error: error.message };
     }
 
-    // STEP 2: Merge
     let mergeResult;
     try {
+      this.logger.log(`[Step 2] Starting merge...`);
       mergeResult = await this.mergeFinalPdfsS3(classId);
       if (mergeResult.status === 'error') {
-         this.logger.error(`Workflow stopped at MERGE step: ${mergeResult.message}`);
-         // Compensating action: Cleanup processed files
-         await this.helpers.deleteFolderContents(`${classId}/processed/`).catch(e => 
-           this.logger.warn(`Compensating cleanup failed: ${e}`)
-         );
+         this.logger.error(`[Step 2] Failed: ${mergeResult.message}`);
          return { step: 'merge', status: 'failed', error: mergeResult.message };
       }
-      this.logger.log(`✓ MERGE step completed successfully`);
+      this.logger.log(`[Step 2] Completed successfully.`);
     } catch (error: any) {
-      this.logger.error(`✗ MERGE step failed: ${error.message}`);
-      // Compensating action: Cleanup processed files
-      await this.helpers.deleteFolderContents(`${classId}/processed/`).catch(e => 
-        this.logger.warn(`Compensating cleanup failed: ${e}`)
-      );
+      this.logger.error(`[Step 2] Failed: ${error.message}`);
       return { step: 'merge', status: 'failed', error: error.message };
     }
 
-    // STEP 3: Split
     let splitResult;
     try {
+      this.logger.log(`[Step 3] Starting split...`);
       splitResult = await this.splitMergedPdf(classId);
-      this.logger.log(`✓ SPLIT step completed successfully`);
+      this.logger.log(`[Step 3] Completed successfully.`);
     } catch (error: any) {
-      this.logger.error(`✗ SPLIT step failed: ${error.message}`);
-      // Split ma własny rollback wewnątrz (transakcja), więc nie musimy tu robić cleanup
+      this.logger.error(`[Step 3] Failed: ${error.message}`);
       return { step: 'split', status: 'failed', error: error.message };
     }
 
-    // Post-cleanup: Tylko intermediate files
-    this.logger.log(`Workflow complete. Cleaning up intermediate files for ${classId}...`);
+    this.logger.log(`[Workflow] Post-execution cleanup...`);
     try {
         await this.helpers.deleteFolderContents(`${classId}/processed/`);
-        this.logger.log('✓ Post-cleanup successful (Intermediate files removed).');
+        this.logger.log('[Workflow] Post-cleanup successful.');
     } catch (error: any) {
-        this.logger.warn(`Post-cleanup warning (non-critical): ${error.message}`);
+        this.logger.warn(`[Workflow] Post-cleanup warning: ${error.message}`);
     }
 
-    this.logger.log(`=== FULL WORKFLOW COMPLETE FOR ${classId} ===`);
+    this.logger.log(`[Workflow] Execution complete for ${classId}`);
     
     return {
        status: 'workflow_complete',
@@ -113,8 +100,9 @@ export class ProcessingService {
          return { status: 'empty', message: `No supported files (PDF/TXT) found in ${uploadsPrefix}` };
     }
 
-    this.logger.log(`Found ${sourceFiles.length} files. Processing in batches of ${BATCH_SIZE}...`);
+    this.logger.log(`[Process] Found ${sourceFiles.length} files. Processing in batches of ${BATCH_SIZE}.`);
     const results: any[] = [];
+    let failureCount = 0; 
 
     for (let i = 0; i < sourceFiles.length; i += BATCH_SIZE) {
         const batch = sourceFiles.slice(i, i + BATCH_SIZE);
@@ -123,12 +111,20 @@ export class ProcessingService {
             batch.map(fileKey => this.processSingleFile(classId, fileKey))
         );
         
+        batchResults.forEach(res => {
+            if (res.status === 'error') failureCount++;
+        });
+
         results.push(...batchResults);
 
         if (i + BATCH_SIZE < sourceFiles.length) {
-            this.logger.log('Waiting 5 seconds between batches...');
+            this.logger.log('[Process] Batch pause (5s)...');
             await this.helpers.sleep(5000);
         }
+    }
+
+    if (failureCount > 0) {
+        return { status: 'partial_error', message: `${failureCount} files failed to process`, details: results };
     }
 
     return { status: 'batch_complete', details: results };
@@ -138,7 +134,7 @@ export class ProcessingService {
     const ext = path.extname(fileKey).toLowerCase();
     const baseName = path.basename(fileKey, ext);
 
-    this.logger.log(`>> Processing: ${baseName} (Type: ${ext})`);
+    this.logger.log(`[File] Processing file: ${baseName} (Type: ${ext})`);
 
     try {
       let txtBuffer: Buffer;
@@ -150,6 +146,11 @@ export class ProcessingService {
       } else {
         const txtKey = `${classId}/processed/${baseName}.txt`; 
         
+        const hasTxt = await this.helpers.checkFileExists(txtKey);
+        if (!hasTxt) {
+            throw new Error(`Missing processed text file: ${txtKey}. OCR result not found.`);
+        }
+
         [txtBuffer, pdfBuffer] = await Promise.all([
            this.helpers.getFileWithRetry(txtKey),
            this.helpers.getFileWithRetry(fileKey)
@@ -170,11 +171,11 @@ export class ProcessingService {
           this.helpers.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8')
       ]);
 
-      this.logger.log(`<< Success: ${baseName}`);
+      this.logger.log(`[File] Success: ${baseName}`);
       return { status: 'success', baseName };
 
     } catch (error: any) {
-      this.logger.error(`!! Failed: ${baseName}: ${error.message}`);
+      this.logger.error(`[File] Failed: ${baseName}: ${error.message}`);
       return { status: 'error', baseName, error: error.message };
     }
   }
@@ -183,7 +184,7 @@ export class ProcessingService {
     const rootFolderPrefix = `${classId}/`;
     const finalSubfolderPrefix = `${rootFolderPrefix}final/`;
 
-    this.logger.log(`Listing files to merge from: ${finalSubfolderPrefix}`);
+    this.logger.log(`[Merge] Listing files in: ${finalSubfolderPrefix}`);
 
     const allFiles = await this.helpers.listFiles(finalSubfolderPrefix);
     const s3PdfFiles = allFiles.filter(key => key.endsWith('.pdf'));
@@ -192,7 +193,7 @@ export class ProcessingService {
       return { status: 'empty', message: `No PDFs found in ${finalSubfolderPrefix} to merge.` };
     }
 
-    this.logger.log(`Found ${s3PdfFiles.length} PDF files (anchors) to merge. Extracting content...`);
+    this.logger.log(`[Merge] Found ${s3PdfFiles.length} PDF files. Extracting content...`);
 
     let allTextContent = '';
     
@@ -202,7 +203,7 @@ export class ProcessingService {
             const txtBuffer = await this.helpers.getFile(txtKey);
             return `\n\n=== CONTENT FROM PART ${path.basename(pdfKey, '.pdf')} ===\n${txtBuffer.toString()}`;
         } catch (error) {
-            this.logger.error(`Error getting text content for ${pdfKey}:`, error);
+            this.logger.error(`[Merge] Error getting text content for ${pdfKey}:`, error);
             return '';
         }
     }));
@@ -222,20 +223,17 @@ export class ProcessingService {
     const finalPdfKey = `${rootFolderPrefix}Final_Merged_${classId}.pdf`;
     const finalTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
-    // KRYTYCZNE: Upload PRZED delete, aby zapobiec utracie danych przy błędzie
-    this.logger.log(`Uploading final merged files...`);
+    this.logger.log(`[Merge] Uploading final merged files...`);
     await Promise.all([
         this.helpers.uploadFile(finalPdfKey, finalPdfBuffer, 'application/pdf'),
         this.helpers.uploadFile(finalTxtKey, finalTxtBuffer, 'text/plain; charset=utf-8')
     ]);
 
-    // Dopiero po sukcesie uploadu - cleanup intermediate files
-    this.logger.log(`Cleaning up intermediate AI files...`);
+    this.logger.log(`[Merge] Cleaning up intermediate AI files...`);
     try {
       await this.helpers.deleteFolderContents(finalSubfolderPrefix);
     } catch (cleanupError: any) {
-      // Nie blokujemy sukcesu operacji, jeśli cleanup zawiedzie (pliki zostają, ale merged jest OK)
-      this.logger.warn(`Cleanup warning (non-critical): ${cleanupError.message}`);
+      this.logger.warn(`[Merge] Cleanup warning: ${cleanupError.message}`);
     }
 
     return {
@@ -250,14 +248,14 @@ export class ProcessingService {
     const rootFolderPrefix = `${classId}/`;
     const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
-    this.logger.log(`Attempting to split topics from: ${mergedTxtKey}`);
+    this.logger.log(`[Split] Attempting to split topics from: ${mergedTxtKey}`);
 
     let fullText = '';
     try {
       const buffer = await this.helpers.getFile(mergedTxtKey);
       fullText = buffer.toString('utf-8');
     } catch (error) {
-      this.logger.error(`Could not find merged text file: ${mergedTxtKey}`);
+      this.logger.error(`[Split] Could not find merged text file: ${mergedTxtKey}`);
       throw new Error('Merged text file not found. Please run merge first.');
     }
 
@@ -329,30 +327,27 @@ export class ProcessingService {
         return { ...t, name: uniqueName };
     });
 
- const generatedFiles: string[] = [];
+    const generatedFiles: string[] = [];
     const topicEntities: Topic[] = [];
     
-    // START TRANSAKCJI
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      this.logger.log(`Generating PDFs and uploading to S3...`);
+      this.logger.log(`[Split] Generating PDFs and uploading to S3...`);
 
-      // 1. Najpierw generujemy i uploadujemy WSZYSTKIE pliki do S3.
-      // Jeśli cokolwiek tutaj zawiedzie, nie dotykamy bazy danych.
       const uploadPromises = finalTopics.map(async (topic) => {
         const newTopicId = randomUUID(); 
         const fileName = `${newTopicId}.pdf`; 
         const finalKey = `${rootFolderPrefix}${fileName}`;
         
-        const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId);
+        const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId, topic.name);
+        
         await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
         
-        generatedFiles.push(finalKey); // Zbieramy klucze, żeby je usunąć w razie rollbacku
+        generatedFiles.push(finalKey);
         
-        // Przygotowujemy encję (ale jeszcze nie zapisujemy)
         const newTopic = queryRunner.manager.create(Topic, {
             topicID: newTopicId,         
             name: topic.name,         
@@ -363,23 +358,18 @@ export class ProcessingService {
 
       await Promise.all(uploadPromises);
 
-      // 2. Operacje na bazie danych (Atomowe zamienienie starych na nowe)
-      this.logger.log(`Updating database topics for class ${classId}...`);
+      this.logger.log(`[Split] Updating database topics for class ${classId}...`);
       
-      // Usuń stare
       await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
       
-      // Zapisz nowe
       if (topicEntities.length > 0) {
         await queryRunner.manager.save(topicEntities);
       }
 
-      // 3. Commit
       await queryRunner.commitTransaction();
-      this.logger.log(`Successfully split and saved ${topicEntities.length} new topics.`);
+      this.logger.log(`[Split] Successfully saved ${topicEntities.length} new topics.`);
 
-      // 4. Cleanup (po sukcesie)
-      this.logger.log('Deleting merged TXT file...');
+      this.logger.log('[Split] Deleting merged TXT file...');
       await this.helpers.deleteFile(mergedTxtKey);
 
       return {
@@ -389,14 +379,12 @@ export class ProcessingService {
       };
 
     } catch (error) {
-      // ROLLBACK
       await queryRunner.rollbackTransaction();
-      this.logger.error(`Split failed. Rolling back database. Error: ${error}`);
+      this.logger.error(`[Split] Failed. Rolled back database. Error: ${error}`);
 
-      // Cleanup S3: Musimy posprzątać pliki, które udało się wgrać, bo baza ich nie widzi
-      this.logger.log('Cleaning up orphaned S3 files due to failure...');
+      this.logger.log('[Split] Cleaning up orphaned S3 files due to failure...');
       for (const key of generatedFiles) {
-          await this.helpers.deleteFile(key).catch(e => this.logger.warn(`Failed to delete orphan ${key}: ${e}`));
+          await this.helpers.deleteFile(key).catch(e => this.logger.warn(`[Split] Failed to delete orphan ${key}: ${e}`));
       }
 
       throw error;

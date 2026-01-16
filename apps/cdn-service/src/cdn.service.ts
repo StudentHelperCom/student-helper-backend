@@ -35,11 +35,9 @@ export class CdnService implements OnModuleInit {
 
   constructor(
     private readonly configService: ConfigService,
-    // ZMIANA: Wstrzykujemy repozytoria zamiast CdnDatabaseService
     private readonly classesRepo: ClassesRepository,
     private readonly topicsRepo: TopicsRepository,
     private readonly dataSource: DataSource
-    
   ) {
     this.s3 = new S3Client({
       region: this.configService.getOrThrow<string>('AWS_REGION'),
@@ -52,38 +50,52 @@ export class CdnService implements OnModuleInit {
     this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
   }
 
-  /**
-   * Startup Cleanup
-   */
+  // --- UPDATED METHOD START ---
   async onModuleInit() {
+    // 1. Clean Local Temp Storage
     try {
       await fs.access(this.rootTempDir);
       const files = await fs.readdir(this.rootTempDir);
       for (const file of files) {
         await fs.unlink(path.join(this.rootTempDir, file)).catch(() => {});
       }
-      this.logger.log('CDN temp storage cleared for startup.');
+      this.logger.log(`[LOCAL] CDN temp storage cleared: ${this.rootTempDir}`);
     } catch {
       await fs.mkdir(this.rootTempDir, { recursive: true });
-      this.logger.log('CDN temp storage directory initialized.');
+      this.logger.log(`[LOCAL] CDN temp storage initialized: ${this.rootTempDir}`);
+    }
+
+    // 2. Clean S3 Storage (Delete all class content)
+    try {
+      this.logger.log(`[S3] Starting global cleanup of S3 bucket...`);
+      // Passing an empty string '' as prefix lists and deletes everything from the root
+      await this.deleteS3Folder(''); 
+      this.logger.log(`[S3] Bucket emptied successfully.`);
+    } catch (error) {
+      this.logger.error(`[S3] Failed to empty bucket on startup: ${error}`);
+      // Optional: throw error if the app should crash if S3 isn't clean
     }
   }
+  // --- UPDATED METHOD END ---
 
-async saveFile(data: { 
+  async saveFile(data: { 
     filename: string; content: Buffer; userId: string; className: string;
   }) {
     const sanitizedFilename = this.sanitizeFilename(data.filename);
     const uniquePrefix = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const tempFilePath = path.join(this.rootTempDir, `${uniquePrefix}_${sanitizedFilename}`);
+    
     const filesToCleanup: string[] = [tempFilePath];
+    const s3KeysCreated: string[] = [];
 
-    // Rozpoczynamy transakcję
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      // 1. Logika bazy danych (wewnątrz transakcji)
+      this.logger.log(`[START] Processing file: ${sanitizedFilename} for class: ${data.className}`);
+
+      // 1. DB Logic
       let classEntity = await queryRunner.manager.findOne(Class, { 
         where: { user: { userID: data.userId }, name: data.className } 
       });
@@ -95,37 +107,43 @@ async saveFile(data: {
         });
         await queryRunner.manager.save(classEntity);
       }
-      
       const classId = classEntity.classID;
 
-      // 2. Przetwarzanie plików (lokalnie)
+      // 2. Local Processing
       await fs.writeFile(tempFilePath, data.content);
       const ext = path.extname(sanitizedFilename).toLowerCase();
       let tempTextPath: string | null = null;
       
-      // OCR robimy PRZED uploadem do S3 i commitem, żeby w razie błędu nie śmiecić
       if (ext === '.pdf') {
         tempTextPath = await this.processPdfTextOnly(tempFilePath, sanitizedFilename, uniquePrefix);
       } else if (['.jpg', '.jpeg', '.png', '.tiff', '.bmp'].includes(ext)) {
         tempTextPath = await this.processImage(tempFilePath, sanitizedFilename, uniquePrefix);
       }
 
-      // 3. Upload do S3 (To jest punkt krytyczny)
+      // 3. Upload Original
       const s3OriginalKey = `${classId}/uploads/${sanitizedFilename}`;
       await this.uploadToS3(s3OriginalKey, data.content);
+      s3KeysCreated.push(s3OriginalKey);
 
+      // 4. Upload Text
       let s3TextKey: string | null = null;
-      let textContent: string | null = null;
-
       if (tempTextPath) {
         filesToCleanup.push(tempTextPath);
-        textContent = await fs.readFile(tempTextPath, 'utf8');
-        s3TextKey = `${classId}/processed/${path.basename(sanitizedFilename, ext)}.txt`;
-        await this.uploadToS3(s3TextKey, Buffer.from(textContent, 'utf8'));
+        const textContent = await fs.readFile(tempTextPath, 'utf8');
+        
+        if (textContent.trim().length > 0) {
+            s3TextKey = `${classId}/processed/${path.basename(sanitizedFilename, ext)}.txt`;
+            await this.uploadToS3(s3TextKey, Buffer.from(textContent, 'utf8'));
+            s3KeysCreated.push(s3TextKey);
+            this.logger.log(`[UPLOAD] Text file uploaded to: ${s3TextKey}`);
+        } else {
+            this.logger.warn(`[OCR] Warning: Generated text content is empty. Skipping text upload.`);
+        }
       }
 
-      // 4. Zatwierdzenie transakcji DB (dopiero jak S3 i OCR się udały)
+      // 5. Commit
       await queryRunner.commitTransaction();
+      this.logger.log(`[SUCCESS] File saved and processed successfully.`);
 
       return { 
         filename: sanitizedFilename,
@@ -135,12 +153,17 @@ async saveFile(data: {
       };
 
     } catch (error) {
-      // ROLLBACK BAZY DANYCH
       await queryRunner.rollbackTransaction();
-      this.logger.error('File processing error (Rollback executed):', error);
-      
-      // Opcjonalnie: Tutaj można by dodać logikę czyszczenia S3, jeśli upload się powiódł, a commit bazy nie
-      // ale w obecnej kolejności (Upload -> Commit) rollback bazy jest bezpieczny.
+      this.logger.error(`[ERROR] File processing failed. DB Rolled back. Reason: ${error}`);
+
+      if (s3KeysCreated.length > 0) {
+        await Promise.all(s3KeysCreated.map(key => 
+          this.s3.send(new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: { Objects: [{ Key: key }] }
+          })).catch(e => this.logger.error(`S3 Rollback failed for ${key}: ${e}`))
+        ));
+      }
       
       throw new BadRequestException('Failed to process or upload file');
     } finally {
@@ -150,7 +173,7 @@ async saveFile(data: {
       }
     }
   }
-
+  
   private async processPdfTextOnly(pdfPath: string, originalFilename: string, prefix: string): Promise<string> {
     const txtPath = path.join(this.rootTempDir, `${prefix}_${path.basename(originalFilename)}.txt`);
     try {
@@ -219,11 +242,7 @@ async saveFile(data: {
     return `https://${this.bucket}.s3.${this.configService.get<string>('AWS_REGION')}.amazonaws.com/${key}`;
   }
 
-  // --- Main Business Logic Methods using Shared Repositories ---
-
   async createClass(userId: string, data: CreateClassDto) {
-    this.logger.log(`Service creating class for User: ${userId}, Name: ${data.className}`);
-
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -255,13 +274,11 @@ async saveFile(data: {
       }
 
       await queryRunner.commitTransaction();
-      this.logger.log(`Class saved successfully. ID: ${saved.classID}`);
       return saved;
 
     } catch (error: any) {
       await queryRunner.rollbackTransaction();
       if (error instanceof ConflictException) throw error;
-      this.logger.error(`Error creating class: ${error.message}`);
       throw new BadRequestException('Failed to create class');
     } finally {
       await queryRunner.release();
@@ -274,32 +291,19 @@ async saveFile(data: {
 
   async getTopicsForClass(classId: string, userId: string) {
     const classEntity = await this.classesRepo.findByIdWithUser(classId);
-
     if (!classEntity) throw new BadRequestException('Class not found');
-    
-    if (classEntity.user.userID !== userId) {
-        throw new ForbiddenException('You do not have permission to view this class.');
-    }
-
+    if (classEntity.user.userID !== userId) throw new ForbiddenException('Access denied');
     return await this.topicsRepo.findByClassId(classId);
   } 
 
   async getFilesForClass(classId: string, userId: string) {
     const classEntity = await this.classesRepo.findByIdWithUser(classId);
-
     if (!classEntity) throw new BadRequestException('Class not found');
-    if (classEntity.user.userID !== userId) {
-      throw new ForbiddenException('You do not have permission to view files for this class.');
-    }
+    if (classEntity.user.userID !== userId) throw new ForbiddenException('Access denied');
 
     const prefix = `${classId}/uploads/`;
-
     try {
-      const command = new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: prefix
-      });
-
+      const command = new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix });
       const response = await this.s3.send(command);
       const files = (response.Contents || []).map((file) => {
         return {
@@ -308,21 +312,13 @@ async saveFile(data: {
           created: file.LastModified
         };
       });
-
-      return {
-        classId: classId,
-        className: classEntity.name,
-        totalFiles: files.length,
-        files: files
-      };
-
+      return { classId: classId, className: classEntity.name, totalFiles: files.length, files: files };
     } catch (error: any) {
-      this.logger.error(`Failed to list files from S3: ${error.message}`);
       throw new BadRequestException('Failed to retrieve file list from storage.');
     }
   }
 
-async deleteClass(classId: string, userId: string) {
+  async deleteClass(classId: string, userId: string) {
     this.logger.log(`Attempting to delete class ${classId} for user ${userId}`);
 
     const queryRunner = this.dataSource.createQueryRunner();
@@ -330,35 +326,30 @@ async deleteClass(classId: string, userId: string) {
     await queryRunner.startTransaction();
 
     try {
-      // 1. Sprawdź uprawnienia i zablokuj wiersz (Pessimistic Write)
       const classEntity = await queryRunner.manager.findOne(Class, {
         where: { classID: classId },
         relations: ['user'],
-        lock: { mode: 'pessimistic_write' } // Blokujemy, żeby nikt inny nie usunął w międzyczasie
+        lock: { mode: 'pessimistic_write' }
       });
 
       if (!classEntity) throw new BadRequestException('Class not found');
-      if (classEntity.user.userID !== userId) {
-        throw new ForbiddenException('You do not have permission to delete this class.');
-      }
+      if (classEntity.user.userID !== userId) throw new ForbiddenException('Access denied');
 
-      // 2. Usuń z DB (najpierw DB - dzięki transakcji to bezpieczne)
-      // Cascade powinno usunąć Topiki, ale dla pewności używamy managera
+      // Usuń z DB
       await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
       await queryRunner.manager.delete(Class, classId);
 
-      // 3. Usuń z S3
-      // Jeśli to zawiedzie, wycofamy usunięcie z DB
+      // Usuń z S3
       try {
         await this.deleteS3Folder(`${classId}/`);
       } catch (s3Error: any) {
          this.logger.error(`S3 deletion failed: ${s3Error.message}. Rolling back DB deletion.`);
-         throw new InternalServerErrorException('Failed to delete files from storage, aborting operation.');
+         throw new InternalServerErrorException('Failed to delete files from storage');
       }
 
       await queryRunner.commitTransaction();
       this.logger.log(`Class ${classId} deleted successfully.`);
-      return { status: 'success', message: 'Class and all related data deleted.' };
+      return { status: 'success', message: 'Class deleted.' };
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
@@ -369,29 +360,33 @@ async deleteClass(classId: string, userId: string) {
   }
   
   private async deleteS3Folder(prefix: string) {
-    let continuationToken: string | undefined = undefined;
+    let hasContents = true;
 
-    do {
+    while (hasContents) {
+      // 1. List objects (default batch size is usually 1000)
       const listCommand = new ListObjectsV2Command({
         Bucket: this.bucket,
-        Prefix: prefix,
-        ContinuationToken: continuationToken
+        Prefix: prefix, // An empty string '' here lists the entire bucket
       });
 
       const listResponse = await this.s3.send(listCommand) as ListObjectsV2CommandOutput;
       
-      if (listResponse.Contents && listResponse.Contents.length > 0) {
-        const objectsToDelete = listResponse.Contents.map(obj => ({ Key: obj.Key }));
-        
-        await this.s3.send(new DeleteObjectsCommand({
-          Bucket: this.bucket,
-          Delete: { Objects: objectsToDelete }
-        }));
-        
-        this.logger.log(`Deleted ${objectsToDelete.length} items from S3 prefix ${prefix}`);
+      // 2. If empty, stop
+      if (!listResponse.Contents || listResponse.Contents.length === 0) {
+        hasContents = false;
+        break;
       }
 
-      continuationToken = listResponse.NextContinuationToken;
-    } while (continuationToken);
+      // 3. Prepare deletion
+      const objectsToDelete = listResponse.Contents.map(obj => ({ Key: obj.Key }));
+      
+      // 4. Delete
+      await this.s3.send(new DeleteObjectsCommand({
+        Bucket: this.bucket,
+        Delete: { Objects: objectsToDelete }
+      }));
+      
+      this.logger.log(`Deleted batch of ${objectsToDelete.length} items from S3 prefix "${prefix}"`);
+    }
   }
 }

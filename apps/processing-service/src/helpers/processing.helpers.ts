@@ -135,7 +135,8 @@ export class ProcessingHelpers {
       return sleep(ms);
   }
 
-  public async buildPdf(content: string, id: string): Promise<Buffer> {
+  // --- UPDATED METHOD: Accepts optional 'title' ---
+  public async buildPdf(content: string, id: string, title?: string): Promise<Buffer> {
     const pdf = await PDFDocument.create();
     pdf.registerFontkit(fontkit);
 
@@ -155,6 +156,22 @@ export class ProcessingHelpers {
     let x = margin;
     let y = page.getHeight() - margin;
 
+    // 1. Draw Title if provided
+    if (title) {
+        const titleLines = this.wrapText(title, maxWidth, font, topicSize);
+        for (const tLine of titleLines) {
+             page.drawText(tLine, {
+                x,
+                y,
+                size: topicSize,
+                font: font,
+                color: rgb(0, 0, 0),
+             });
+             y -= (topicSize + 6);
+        }
+        y -= 10; // Extra spacing after title
+    }
+
     const lines = content.split('\n').filter(line => line.trim().length > 0);
 
     for (const line of lines) {
@@ -165,6 +182,7 @@ export class ProcessingHelpers {
 
       const cleanLine = line.trim();
 
+      // Check if line looks like a topic header (e.g. "1. Introduction")
       const isTopicLine = /^\d+\.\s/.test(cleanLine);
 
       if (isTopicLine) {
