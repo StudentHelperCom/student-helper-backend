@@ -3,7 +3,6 @@ import {
   BadRequestException, 
   Logger, 
   ForbiddenException, 
-  OnModuleInit, 
   ConflictException, 
   InternalServerErrorException
 } from '@nestjs/common';
@@ -18,9 +17,7 @@ import {
   ListObjectsV2CommandOutput 
 } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
-import { DataSource } from 'typeorm'; // <--- IMPORT ADDED
-
-// Imports for both Repositories (Reads) and Entities (Writes/Transactions)
+import { DataSource } from 'typeorm';
 import { ClassesRepository, TopicsRepository, Class, Topic } from '@repo/database'; 
 import { CreateClassDto } from '@repo/common';
 
@@ -35,7 +32,7 @@ export class CdnService {
     private readonly configService: ConfigService,
     private readonly classesRepo: ClassesRepository,
     private readonly topicsRepo: TopicsRepository,
-    private readonly dataSource: DataSource // <--- INJECTION ADDED
+    private readonly dataSource: DataSource
   ) {
     this.s3 = new S3Client({
       region: this.configService.getOrThrow<string>('AWS_REGION'),
@@ -48,10 +45,6 @@ export class CdnService {
     this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
   }
 
-  /**
-   * Run this ONCE before starting the batch upload loop.
-   * It handles: Local Cleanup, DB Class Creation, and S3 Folder Cleanup.
-   */
   async prepareUploadEnvironment(userId: string, className: string): Promise<string> {
     // 1. Local Temp Storage Cleanup
     try {
@@ -104,10 +97,6 @@ export class CdnService {
     }
   }
 
-  /**
-   * Saves a single file. Assumes environment is already prepared.
-   * Does NOT clean S3 (so it doesn't delete previous files in the batch).
-   */
   async saveFile(data: { 
     filename: string; content: Buffer; classId: string;
   }) {
@@ -129,8 +118,6 @@ export class CdnService {
       
       if (ext === '.pdf') {
         tempTextPath = await this.processPdfTextOnly(tempFilePath, sanitizedFilename, uniquePrefix);
-      } else if (['.jpg', '.jpeg', '.png', '.tiff', '.bmp'].includes(ext)) {
-        tempTextPath = await this.processImage(tempFilePath, sanitizedFilename, uniquePrefix);
       }
 
       // 2. Upload Original File to S3
@@ -151,8 +138,6 @@ export class CdnService {
             this.logger.log(`[UPLOAD] Text file uploaded to: ${s3TextKey}`);
         }
       }
-
-      // Success
       return { 
         filename: sanitizedFilename,
         classId: classId,
@@ -179,7 +164,6 @@ export class CdnService {
       }
     }
   }
-
 
   async createClass(userId: string, data: CreateClassDto) {
     const queryRunner = this.dataSource.createQueryRunner();
@@ -256,7 +240,7 @@ export class CdnService {
     }
   }
 
-  async deleteClass(classId: string, userId: string) {
+async deleteClass(classId: string, userId: string) {
     this.logger.log(`Attempting to delete class ${classId} for user ${userId}`);
 
     const queryRunner = this.dataSource.createQueryRunner();
@@ -264,15 +248,16 @@ export class CdnService {
     await queryRunner.startTransaction();
 
     try {
-      const classEntity = await queryRunner.manager.findOne(Class, {
-        where: { classID: classId },
-        relations: ['user'],
-        lock: { mode: 'pessimistic_write' }
-      });
+      const classEntity = await queryRunner.manager
+        .createQueryBuilder(Class, 'class')
+        .setLock('pessimistic_write')
+        .innerJoinAndSelect('class.user', 'user')
+        .where('class.classID = :classId', { classId })
+        .getOne();
 
       if (!classEntity) throw new BadRequestException('Class not found');
       if (classEntity.user.userID !== userId) throw new ForbiddenException('Access denied');
-
+      
       await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
       await queryRunner.manager.delete(Class, classId);
       
@@ -294,7 +279,7 @@ export class CdnService {
         await queryRunner.release();
     }
   }
-  
+
   private async processPdfTextOnly(pdfPath: string, originalFilename: string, prefix: string): Promise<string> {
     const txtPath = path.join(this.rootTempDir, `${prefix}_${path.basename(originalFilename)}.txt`);
     try {
@@ -324,19 +309,6 @@ export class CdnService {
       return txtPath;
     } catch (err) {
       throw err;
-    }
-  }
-
-  private async processImage(imagePath: string, originalFilename: string, prefix: string): Promise<string> {
-    const baseName = path.basename(originalFilename, path.extname(originalFilename));
-    const txtPath = path.join(this.rootTempDir, `${prefix}_${baseName}.txt`);
-    const worker = await createWorker('eng+pol');
-    try {
-      const { data: { text } } = await worker.recognize(imagePath);
-      await fs.writeFile(txtPath, text, 'utf8');
-      return txtPath;
-    } finally {
-      await worker.terminate();
     }
   }
 
