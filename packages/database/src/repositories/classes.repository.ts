@@ -84,33 +84,28 @@ export class ClassesRepository {
    * Delete class with all related topics.
    * Uses pessimistic lock. Runs in transaction.
    */
-  async deleteWithTopics(
-    classId: string,
-    userId: string
-  ): Promise<{ class: Class }> {
-    return this.dataSource.transaction(async (manager) => {
-      // Lock and verify ownership
-      const classEntity = await manager.findOne(Class, {
-        where: { classID: classId },
-        relations: ['user'],
-        lock: { mode: 'pessimistic_write' },
-      });
+  async deleteWithTopics(classId: string, userId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      // FIX: Używamy QueryBuilder zamiast findOne dla blokady PESSIMISTIC_WRITE
+      // i wymuszamy INNER JOIN, aby uniknąć błędu "nullable side of outer join"
+      const classEntity = await manager
+        .createQueryBuilder(Class, 'class')
+        .innerJoinAndSelect('class.user', 'user')
+        .setLock('pessimistic_write')
+        .where('class.classID = :classId', { classId })
+        .getOne();
 
       if (!classEntity) {
-        throw new Error('CLASS_NOT_FOUND');
+        throw new Error('NOT_FOUND');
       }
 
       if (classEntity.user.userID !== userId) {
         throw new Error('FORBIDDEN');
       }
 
-      // Delete topics first (cascade should handle this, but explicit is better)
+      // Usuwamy tematy i klasę w ramach jednej transakcji
       await manager.delete(Topic, { class: { classID: classId } as any });
-      
-      // Delete class
       await manager.delete(Class, classId);
-
-      return { class: classEntity };
     });
   }
 }

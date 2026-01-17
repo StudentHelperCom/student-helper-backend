@@ -240,46 +240,26 @@ export class CdnService {
     }
   }
 
-async deleteClass(classId: string, userId: string) {
-    this.logger.log(`Attempting to delete class ${classId} for user ${userId}`);
-
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+  async deleteClass(classId: string, userId: string) {
+    this.logger.log(`Attempting to delete class ${classId}`);
 
     try {
-      const classEntity = await queryRunner.manager
-        .createQueryBuilder(Class, 'class')
-        .setLock('pessimistic_write')
-        .innerJoinAndSelect('class.user', 'user')
-        .where('class.classID = :classId', { classId })
-        .getOne();
-
-      if (!classEntity) throw new BadRequestException('Class not found');
-      if (classEntity.user.userID !== userId) throw new ForbiddenException('Access denied');
-      
-      await queryRunner.manager.delete(Topic, { class: { classID: classId } as any });
-      await queryRunner.manager.delete(Class, classId);
-      
+      await this.classesRepo.deleteWithTopics(classId, userId);
       try {
         await this.deleteS3Folder(`${classId}/`);
       } catch (s3Error: any) {
-         this.logger.error(`S3 deletion failed: ${s3Error.message}. Rolling back DB deletion.`);
-         throw new InternalServerErrorException('Failed to delete files from storage');
+         this.logger.error(`S3 deletion failed for ${classId}: ${s3Error.message}. Orphaned files may remain.`);
       }
 
-      await queryRunner.commitTransaction();
-      this.logger.log(`Class ${classId} deleted successfully.`);
       return { status: 'success', message: 'Class deleted.' };
 
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
+    } catch (error: any) {
+      if (error.message === 'NOT_FOUND') throw new BadRequestException('Class not found');
+      if (error.message === 'FORBIDDEN') throw new ForbiddenException('Access denied');
       throw error;
-    } finally {
-        await queryRunner.release();
     }
   }
-
+  
   private async processPdfTextOnly(pdfPath: string, originalFilename: string, prefix: string): Promise<string> {
     const txtPath = path.join(this.rootTempDir, `${prefix}_${path.basename(originalFilename)}.txt`);
     try {
