@@ -84,28 +84,24 @@ export class ClassesRepository {
    * Delete class with all related topics.
    * Uses pessimistic lock. Runs in transaction.
    */
-  async deleteWithTopics(classId: string, userId: string): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
-      // FIX: Używamy QueryBuilder zamiast findOne dla blokady PESSIMISTIC_WRITE
-      // i wymuszamy INNER JOIN, aby uniknąć błędu "nullable side of outer join"
-      const classEntity = await manager
-        .createQueryBuilder(Class, 'class')
-        .innerJoinAndSelect('class.user', 'user')
-        .setLock('pessimistic_write')
-        .where('class.classID = :classId', { classId })
-        .getOne();
+async deleteWithTopics(classId: string, userId: string): Promise<void> {
+  return this.dataSource.transaction(async (manager) => {
+    const classEntity = await manager
+      .createQueryBuilder(Class, 'class')
+      .innerJoinAndSelect('class.user', 'user')
+      .setLock('pessimistic_write')
+      .where('class.classID = :classId', { classId })
+      .getOne();
 
-      if (!classEntity) {
-        throw new Error('NOT_FOUND');
-      }
+    if (!classEntity) {
+      throw new Error('CLASS_NOT_FOUND');
+    }
 
-      if (classEntity.user.userID !== userId) {
-        throw new Error('FORBIDDEN');
-      }
-
-      // Usuwamy tematy i klasę w ramach jednej transakcji
-      await manager.delete(Topic, { class: { classID: classId } as any });
-      await manager.delete(Class, classId);
-    });
+    if (classEntity.user.userID !== userId) {
+      throw new Error('FORBIDDEN');
+    }
+    
+    await manager.delete(Class, classId);
+  });
   }
 }
