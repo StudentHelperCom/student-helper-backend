@@ -448,7 +448,7 @@ export class ProcessingService {
         generatedFiles.push(finalKey);
         
         // Create topic entity for repository
-        const newTopic = this.topicsRepo.create({
+        const newTopic = this.topicsRepo.prepare({
             topicID: newTopicId,          
             name: topic.name,          
             class: { classID: classId } as any,

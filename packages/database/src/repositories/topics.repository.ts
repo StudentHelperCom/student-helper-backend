@@ -12,7 +12,7 @@ export class TopicsRepository {
   ) {}
 
   // --- Methods from Processing Service ---
-  create(data: Partial<Topic>): Topic {
+  prepare(data: Partial<Topic>): Topic {
     return this.repo.create(data);
   }
 
