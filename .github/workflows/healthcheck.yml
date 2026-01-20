@@ -17,24 +17,22 @@ jobs:
     name: Ping URL List
     steps:
       - name: Ping URLs using Curl
+        env:
+          URLS: ${{ vars.PING_LIST }}
         run: |
-
-          URLS="https://student-helper-frontend.onrender.com 
-          https://student-helper-gateway.onrender.com 
-          https://student-helper-auth.onrender.com 
-          https://student-helper-cdn-service.onrender.com 
-          https://student-helper-processing.onrender.com 
-          https://student-helper-quiz-service.onrender.com"
-          
+          if [ -z "$URLS" ]; then
+            echo "Lista URL jest pusta."
+            exit 1
+          fi
 
           for url in $URLS; do
             echo "--------------------------------"
             echo "Sprawdzam: $url"
             if curl -I -s --max-time 10 "$url" > /dev/null; then
-              echo "✅ SUKCES: Serwis odpowiada."
+              echo "SUKCES"
             else
-              echo "❌ BŁĄD: Serwis nie odpowiada!"
+              echo "BŁĄD"
             fi
           done
           echo "--------------------------------"
-          echo "Koniec sprawdzania."
+          echo "Koniec."
