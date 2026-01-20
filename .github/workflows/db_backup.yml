@@ -1,0 +1,26 @@
+name: Daily Database Sync
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup_and_restore:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Install PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Run Backup and Restore
+        env:
+          SOURCE_DB: ${{ secrets.SOURCE_DB_URL }}
+          DEST_DB: ${{ secrets.DEST_DB_URL }}
+        run: |
+          pg_dump $SOURCE_DB -Fc --no-owner --no-acl | pg_restore -d $DEST_DB --clean --if-exists --no-owner --no-acl
