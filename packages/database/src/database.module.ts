@@ -45,7 +45,6 @@ export class SharedDatabaseModule {
             ssl: config.get<boolean>('DB_SSL') 
               ? { rejectUnauthorized: false } 
               : false,
-            autoLoadEntities: true,
           }),
         }),
       ],
