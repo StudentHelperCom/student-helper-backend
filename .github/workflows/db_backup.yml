@@ -23,4 +23,4 @@ jobs:
           SOURCE_DB: ${{ secrets.SOURCE_DB_URL }}
           DEST_DB: ${{ secrets.DEST_DB_URL }}
         run: |
-          pg_dump $SOURCE_DB -Fc --no-owner --no-acl | pg_restore -d $DEST_DB --clean --if-exists --no-owner --no-acl
+          docker run --rm postgres:alpine pg_dump "$SOURCE_DB" -Fc --no-owner --no-acl | docker run --rm -i postgres:alpine pg_restore -d "$DEST_DB" --clean --if-exists --no-owner --no-acl
