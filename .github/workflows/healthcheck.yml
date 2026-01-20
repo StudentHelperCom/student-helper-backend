@@ -1,0 +1,40 @@
+name: Healthcheck
+
+on:
+  schedule:
+    # USTAWIENIE CZASU
+    # Składnia: 'minuta godzina dzien miesiac dzien_tygodnia'
+    # GitHub używa czasu UTC
+    # */13 = co 13 minut
+    # 8-19 = od 08:00 do 19:00 UTC
+    - cron: '*/13 8-19 * * *'
+  
+  workflow_dispatch:
+
+jobs:
+  ping_services:
+    runs-on: ubuntu-latest
+    name: Ping URL List
+    steps:
+      - name: Ping URLs using Curl
+        run: |
+
+          URLS="https://student-helper-frontend.onrender.com 
+          https://student-helper-gateway.onrender.com 
+          https://student-helper-auth.onrender.com 
+          https://student-helper-cdn-service.onrender.com 
+          https://student-helper-processing.onrender.com 
+          https://student-helper-quiz-service.onrender.com"
+          
+
+          for url in $URLS; do
+            echo "--------------------------------"
+            echo "Sprawdzam: $url"
+            if curl -I -s --max-time 10 "$url" > /dev/null; then
+              echo "✅ SUKCES: Serwis odpowiada."
+            else
+              echo "❌ BŁĄD: Serwis nie odpowiada!"
+            fi
+          done
+          echo "--------------------------------"
+          echo "Koniec sprawdzania."
