@@ -24,7 +24,7 @@ jobs:
             echo "Lista URL jest pusta."
             exit 1
           fi
-
+          ERROR_FLAG=false
           for url in $URLS; do
             echo "--------------------------------"
             echo "Sprawdzam: $url"
@@ -32,7 +32,12 @@ jobs:
               echo "SUKCES"
             else
               echo "BŁĄD"
+              ERROR_FLAG=true
             fi
           done
           echo "--------------------------------"
-          echo "Koniec."
+          if [ "$HAS_ERROR" = true ]; then
+            exit 1
+          else
+            echo "Mamy problem przyjaciel"
+            exit 0
