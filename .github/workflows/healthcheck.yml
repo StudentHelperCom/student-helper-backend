@@ -16,10 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     name: Ping URL List
     steps:
-      - name: Ping URLs using Curl
+      - name: Ping URLs
         env:
           URLS: ${{ vars.PING_LIST }}
         run: |
+          set +e
           if [ -z "$URLS" ]; then
             echo "Lista URL jest pusta."
             exit 1
