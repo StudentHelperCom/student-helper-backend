@@ -28,10 +28,15 @@ jobs:
           for url in $URLS; do
             echo "--------------------------------"
             echo "Sprawdzam: $url"
-            if curl -I -s --max-time 10 "$url" > /dev/null; then
-              echo "SUKCES"
+            curl -I -s --max-time 10 "$url" > /dev/null
+            EXIT_CODE=$?
+            if [$EXIT_CODE -eq 0]; then
+              echo "SUCCESS"
+            elif [$EXIT_CODE -eq 28]; then
+              echo "TIME OUT"
+              ERROR_FLAG=true
             else
-              echo "BŁĄD"
+              echo "ERROR"
               ERROR_FLAG=true
             fi
           done
@@ -39,5 +44,4 @@ jobs:
           if [ "$HAS_ERROR" = true ]; then
             exit 1
           else
-            echo "Mamy problem przyjaciel"
             exit 0
