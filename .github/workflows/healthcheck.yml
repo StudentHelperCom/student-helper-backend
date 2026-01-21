@@ -7,7 +7,7 @@ on:
     # GitHub używa czasu UTC
     # */13 = co 13 minut
     # 8-19 = od 08:00 do 19:00 UTC
-    - cron: '*/3 8-19 * * *'
+    - cron: '*/3 8-22 * * *'
   
   workflow_dispatch:
 
