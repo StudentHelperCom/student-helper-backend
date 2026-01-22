@@ -1,0 +1,49 @@
+name: Healthcheck
+
+on:
+  schedule:
+    # USTAWIENIE CZASU
+    # Składnia: 'minuta godzina dzien miesiac dzien_tygodnia'
+    # GitHub używa czasu UTC
+    # */13 = co 13 minut
+    # 8-19 = od 08:00 do 19:00 UTC
+    - cron: '*/13 8-19 * * *'
+  
+  workflow_dispatch:
+
+jobs:
+  ping_services:
+    runs-on: ubuntu-latest
+    name: Ping URL List
+    steps:
+      - name: Ping URLs
+        env:
+          URLS: ${{ vars.PING_LIST }}
+        run: |
+          set +e
+          if [ -z "$URLS" ]; then
+            echo "Lista URL jest pusta."
+            exit 1
+          fi
+          HAS_ERROR=false
+          for url in $URLS; do
+            echo "--------------------------------"
+            echo "Sprawdzam: $url"
+            curl -I -s --max-time 10 "$url" > /dev/null
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 0 ]; then
+              echo "SUCCESS"
+            elif [ $EXIT_CODE -eq 28 ]; then
+              echo "TIME OUT"
+              HAS_ERROR=true
+            else
+              echo "ERROR"
+              HAS_ERROR=true
+            fi
+          done
+          echo "--------------------------------"
+          if [ "$HAS_ERROR" = true ]; then
+            exit 1
+          else
+            exit 0
+          fi
