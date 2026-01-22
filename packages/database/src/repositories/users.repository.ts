@@ -24,7 +24,6 @@ export class UsersRepository {
     passwordHash: string;
   }): Promise<User> {
     return this.dataSource.transaction(async (manager) => {
-      // Check if user exists with pessimistic lock (prevents race condition)
       const existing = await manager.findOne(User, {
         where: { email: userData.email },
         lock: { mode: 'pessimistic_write' },
@@ -34,7 +33,6 @@ export class UsersRepository {
         throw new Error('USER_ALREADY_EXISTS');
       }
 
-      // Create and save user
       const newUser = manager.create(User, {
         email: userData.email,
         passwordHash: userData.passwordHash,
@@ -45,15 +43,9 @@ export class UsersRepository {
     });
   }
 
-  /**
-   * Update last activity date atomically.
-   * Runs in transaction.
-   */
   async updateLastActivity(userId: string): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
-      await manager.update(User, userId, {
-        lastActivityDate: new Date(),
-      });
+    await this.repo.update(userId, {
+      lastActivityDate: new Date(),
     });
   }
 }
