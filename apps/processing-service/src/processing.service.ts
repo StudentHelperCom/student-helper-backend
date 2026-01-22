@@ -1,14 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ProcessingHelpers } from './helpers/processing.helpers';
+import { ProcessingLogicService } from './processing-logic.service';
 import * as path from 'path';
-import { ProcessingAi } from './helpers/processing.ai';
+import { ProcessingAiService } from './processing-ai.service';
 import { randomUUID } from 'crypto';
 import { TopicsRepository } from '@repo/database';
 import { Topic } from '@repo/database';
 
 const BATCH_SIZE = 3;
 
-// Interface for our status file stored in S3
 interface ProcessingStatus {
   state: 'processing' | 'completed' | 'partial_error' | 'failed';
   timestamp: string;
@@ -20,12 +19,11 @@ export class ProcessingService {
   private readonly logger = new Logger(ProcessingService.name);
 
   constructor(
-    private readonly helpers: ProcessingHelpers,
-    private readonly aiService: ProcessingAi,
+    private readonly helpers: ProcessingLogicService,
+    private readonly aiService: ProcessingAiService,
     private readonly topicsRepo: TopicsRepository
   ) {}
 
-  // --- NEW HELPER: Update Status Marker in S3 ---
   private async updateStatusMarker(classId: string, state: ProcessingStatus['state'], details?: any) {
     const statusKey = `${classId}/status.json`;
     const statusData: ProcessingStatus = {
@@ -43,7 +41,6 @@ export class ProcessingService {
         this.logger.warn(`Failed to update status marker: ${e}`);
     }
   }
-  // ----------------------------------------------
 
   async executeFullWorkflow(classId: string) {
     this.logger.log(`[Workflow] Starting execution for class ID: ${classId}`);
@@ -64,7 +61,6 @@ export class ProcessingService {
       processResult = await this.process(classId);
       
       if (processResult.status !== 'batch_complete' && processResult.status !== 'partial_error') {
-         // Critical failure in processing logic
          const msg = `[Step 1] Failed. Status: ${processResult.status}. Msg: ${processResult.message}`;
          this.logger.error(msg);
          await this.updateStatusMarker(classId, 'failed', { error: msg });
@@ -80,7 +76,7 @@ export class ProcessingService {
     let mergeResult;
     try {
       this.logger.log(`[Step 2] Starting merge...`);
-      mergeResult = await this.mergeFinalPdfsS3(classId);
+      mergeResult = await this.mergeFinalContentS3(classId); // renamed for clarity
       if (mergeResult.status === 'error') {
          const msg = `[Step 2] Failed: ${mergeResult.message}`;
          this.logger.error(msg);
@@ -97,7 +93,7 @@ export class ProcessingService {
     let splitResult;
     try {
       this.logger.log(`[Step 3] Starting split...`);
-      splitResult = await this.splitMergedPdf(classId);
+      splitResult = await this.splitMergedContent(classId); // renamed for clarity
       this.logger.log(`[Step 3] Completed successfully.`);
     } catch (error: any) {
       this.logger.error(`[Step 3] Exception: ${error.message}`);
@@ -132,16 +128,13 @@ export class ProcessingService {
     };
   }
 
-  // --- UPDATED CHECK STATUS METHOD ---
   async checkStatus(classId: string) {
     const statusKey = `${classId}/status.json`;
     
     try {
-        // 1. Try to read the explicit status file from S3
         const statusBuffer = await this.helpers.getFile(statusKey);
         const statusData: ProcessingStatus = JSON.parse(statusBuffer.toString('utf-8'));
 
-        // Logic Mapping
         switch (statusData.state) {
             case 'completed':
                 return { 
@@ -151,13 +144,13 @@ export class ProcessingService {
                 };
             case 'partial_error':
                 return { 
-                    isComplete: true, // It is technically "done", just not perfectly
+                    isComplete: true, 
                     status: 'partial_error', 
                     details: 'Workflow completed but some files failed to process.' 
                 };
             case 'failed':
                 return { 
-                    isComplete: true, // It stopped running
+                    isComplete: true, 
                     status: 'failed', 
                     details: statusData.details?.error || 'Workflow failed.' 
                 };
@@ -169,8 +162,7 @@ export class ProcessingService {
                 };
         }
     } catch (e) {
-        // 2. Fallback (if status.json doesn't exist yet or was deleted)
-        // We use the old logic as a backup
+        // Fallback checks
         const topicCount = await this.topicsRepo.countByClassId(classId);
         
         if (topicCount > 0) {
@@ -225,14 +217,12 @@ export class ProcessingService {
     }
 
     if (failureCount > 0) {
-        // Return details but don't crash, allowing the workflow to proceed to Merge/Split for the files that succeeded
         return { status: 'partial_error', message: `${failureCount} files failed to process`, details: results };
     }
 
     return { status: 'batch_complete', details: results };
   }
 
-  // ... (Rest of your methods: processSingleFile, mergeFinalPdfsS3, splitMergedPdf remain exactly the same)
   private async processSingleFile(classId: string, fileKey: string) {
     const ext = path.extname(fileKey).toLowerCase();
     const baseName = path.basename(fileKey, ext);
@@ -263,14 +253,10 @@ export class ProcessingService {
       const aiOutput = await this.aiService.askGeminiWithRetry(txtBuffer, pdfBuffer);
 
       const finalId = Math.random().toString(36).substring(2, 10);
-      const finalPdf = await this.helpers.buildPdf(aiOutput, finalId);
       const finalTxt = Buffer.from(aiOutput, 'utf-8');
-
-      const finalPdfKey = `${classId}/final/${finalId}.pdf`;
       const finalTxtKey = `${classId}/final/${finalId}.txt`;
 
       await Promise.all([
-          this.helpers.uploadFile(finalPdfKey, finalPdf, 'application/pdf'),
           this.helpers.uploadFile(finalTxtKey, finalTxt, 'text/plain; charset=utf-8')
       ]);
 
@@ -283,30 +269,30 @@ export class ProcessingService {
     }
   }
 
-  async mergeFinalPdfsS3(classId: string) {
+  // Renamed from mergeFinalPdfsS3 to mergeFinalContentS3 since we don't output PDF anymore
+  async mergeFinalContentS3(classId: string) {
     const rootFolderPrefix = `${classId}/`;
     const finalSubfolderPrefix = `${rootFolderPrefix}final/`;
 
     this.logger.log(`[Merge] Listing files in: ${finalSubfolderPrefix}`);
 
     const allFiles = await this.helpers.listFiles(finalSubfolderPrefix);
-    const s3PdfFiles = allFiles.filter(key => key.endsWith('.pdf'));
+    const s3TxtFiles = allFiles.filter(key => key.endsWith('.txt'));
 
-    if (!s3PdfFiles.length) {
-      return { status: 'empty', message: `No PDFs found in ${finalSubfolderPrefix} to merge.` };
+    if (!s3TxtFiles.length) {
+      return { status: 'empty', message: `No TXTs found in ${finalSubfolderPrefix} to merge.` };
     }
 
-    this.logger.log(`[Merge] Found ${s3PdfFiles.length} PDF files. Extracting content...`);
+    this.logger.log(`[Merge] Found ${s3TxtFiles.length} TXT files. Extracting content...`);
 
     let allTextContent = '';
     
-    const textContents = await Promise.all(s3PdfFiles.map(async (pdfKey) => {
+    const textContents = await Promise.all(s3TxtFiles.map(async (key) => {
         try {
-            const txtKey = pdfKey.replace('.pdf', '.txt');
-            const txtBuffer = await this.helpers.getFile(txtKey);
-            return `\n\n=== CONTENT FROM PART ${path.basename(pdfKey, '.pdf')} ===\n${txtBuffer.toString()}`;
+            const txtBuffer = await this.helpers.getFile(key);
+            return `\n\n=== CONTENT FROM PART ${path.basename(key, '.txt')} ===\n${txtBuffer.toString()}`;
         } catch (error) {
-            this.logger.error(`[Merge] Error getting text content for ${pdfKey}:`, error);
+            this.logger.error(`[Merge] Error getting text content for ${key}:`, error);
             return '';
         }
     }));
@@ -319,18 +305,11 @@ export class ProcessingService {
 
     const mergedContent = await this.aiService.askGeminiToMerge(allTextContent);
 
-    const mergeId = Math.random().toString(36).substring(2, 10);
-    const finalPdfBuffer = await this.helpers.buildPdf(mergedContent, mergeId);
     const finalTxtBuffer = Buffer.from(mergedContent, 'utf-8');
-    
-    const finalPdfKey = `${rootFolderPrefix}Final_Merged_${classId}.pdf`;
     const finalTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
-    this.logger.log(`[Merge] Uploading final merged files...`);
-    await Promise.all([
-        this.helpers.uploadFile(finalPdfKey, finalPdfBuffer, 'application/pdf'),
-        this.helpers.uploadFile(finalTxtKey, finalTxtBuffer, 'text/plain; charset=utf-8')
-    ]);
+    this.logger.log(`[Merge] Uploading final merged txt file...`);
+    await this.helpers.uploadFile(finalTxtKey, finalTxtBuffer, 'text/plain; charset=utf-8');
 
     this.logger.log(`[Merge] Cleaning up intermediate AI files...`);
     try {
@@ -341,13 +320,13 @@ export class ProcessingService {
 
     return {
       status: 'ok',
-      message: 'Merge complete. Intermediate AI files deleted.',
-      finalPdfKey,
+      message: 'Merge complete. Intermediate AI files deleted. Saved as TXT.',
       finalTxtKey
     };
   }
 
-  async splitMergedPdf(classId: string) {
+  // Renamed from splitMergedPdf to splitMergedContent
+  async splitMergedContent(classId: string) {
     const rootFolderPrefix = `${classId}/`;
     const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
@@ -434,23 +413,23 @@ export class ProcessingService {
     const topicEntities: Topic[] = [];
 
     try {
-      this.logger.log(`[Split] Generating PDFs and uploading to S3...`);
+      this.logger.log(`[Split] Generating TXTs and uploading to S3...`);
 
       const uploadPromises = finalTopics.map(async (topic) => {
         const newTopicId = randomUUID(); 
-        const fileName = `${newTopicId}.pdf`; 
+        const fileName = `${newTopicId}.txt`; // changed to .txt
         const finalKey = `${rootFolderPrefix}${fileName}`;
         
-        const pdfBuffer = await this.helpers.buildPdf(topic.content, newTopicId, topic.name);
+        // No more buildPdf, just raw string content
+        const txtBuffer = Buffer.from(topic.content, 'utf-8');
         
-        await this.helpers.uploadFile(finalKey, pdfBuffer, 'application/pdf');
+        await this.helpers.uploadFile(finalKey, txtBuffer, 'text/plain; charset=utf-8');
         
         generatedFiles.push(finalKey);
         
-        // Create topic entity for repository
         const newTopic = this.topicsRepo.create({
-            topicID: newTopicId,          
-            name: topic.name,          
+            topicID: newTopicId,           
+            name: topic.name,           
             class: { classID: classId } as any,
         });
         topicEntities.push(newTopic);
@@ -460,17 +439,12 @@ export class ProcessingService {
 
       this.logger.log(`[Split] Updating database topics for class ${classId}...`);
       
-      // Use repository transactional method
       await this.topicsRepo.replaceForClass(classId, topicEntities);
       
       this.logger.log(`[Split] Successfully saved ${topicEntities.length} new topics.`);
-
-      this.logger.log('[Split] Deleting merged TXT file...');
-      await this.helpers.deleteFile(mergedTxtKey);
-
       return {
           status: 'ok',
-          message: `Split done. Topics saved using UUIDs as filenames.`,
+          message: `Split done. Topics saved as TXT files using UUIDs as filenames.`,
           files: generatedFiles
       };
 

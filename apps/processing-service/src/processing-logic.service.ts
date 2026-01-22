@@ -9,17 +9,14 @@ import {
   DeleteObjectsCommand, 
   HeadObjectCommand
 } from '@aws-sdk/client-s3';
-import { PDFDocument, rgb } from 'pdf-lib';
 import { Readable } from 'stream';
-import fontkit from '@pdf-lib/fontkit';
-import * as fs from 'fs';
 import * as path from 'path';
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 @Injectable()
-export class ProcessingHelpers {
-  private readonly logger = new Logger(ProcessingHelpers.name);
+export class ProcessingLogicService {
+  private readonly logger = new Logger(ProcessingLogicService.name);
   private readonly s3: S3Client;
   private readonly bucket: string;
 
@@ -57,7 +54,7 @@ export class ProcessingHelpers {
   public async uploadFile(key: string, buffer: Buffer, contentType?: string) {
     if (!contentType) {
       if (key.endsWith('.pdf')) contentType = 'application/pdf';
-      else if (key.endsWith('.txt')) contentType = 'text/plain';
+      else if (key.endsWith('.txt')) contentType = 'text/plain; charset=utf-8';
       else contentType = 'application/octet-stream';
     }
     return this.s3.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: buffer, ContentType: contentType }));
@@ -135,120 +132,6 @@ export class ProcessingHelpers {
       return sleep(ms);
   }
 
-  // --- UPDATED METHOD: Accepts optional 'title' ---
-  public async buildPdf(content: string, id: string, title?: string): Promise<Buffer> {
-    const pdf = await PDFDocument.create();
-    pdf.registerFontkit(fontkit);
-
-    const regularFontBytes = fs.readFileSync(
-      path.join(__dirname, '..','..', 'assets', 'fonts', 'DejaVuSans.ttf')
-    );
-
-    const font = await pdf.embedFont(regularFontBytes);
-
-    let page = pdf.addPage([595, 842]);
-    const topicSize = 14;
-    const fontSize = 11;
-    const lineHeight = 14;
-    const margin = 50;
-    const maxWidth = page.getWidth() - margin * 2;
-
-    let x = margin;
-    let y = page.getHeight() - margin;
-
-    // 1. Draw Title if provided
-    if (title) {
-        const titleLines = this.wrapText(title, maxWidth, font, topicSize);
-        for (const tLine of titleLines) {
-             page.drawText(tLine, {
-                x,
-                y,
-                size: topicSize,
-                font: font,
-                color: rgb(0, 0, 0),
-             });
-             y -= (topicSize + 6);
-        }
-        y -= 10; // Extra spacing after title
-    }
-
-    const lines = content.split('\n').filter(line => line.trim().length > 0);
-
-    for (const line of lines) {
-      if (y < margin + 40) {
-        page = pdf.addPage([595, 842]);
-        y = page.getHeight() - margin;
-      }
-
-      const cleanLine = line.trim();
-
-      // Check if line looks like a topic header (e.g. "1. Introduction")
-      const isTopicLine = /^\d+\.\s/.test(cleanLine);
-
-      if (isTopicLine) {
-        if (y < page.getHeight() - margin) {
-          y -= 8;
-        }
-        page.drawText(cleanLine, {
-          x,
-          y,
-          size: topicSize,
-          font: font,
-          color: rgb(0, 0, 0),
-        });
-
-        y -= topicSize + 4;
-        continue;
-      }
-
-      const wrapped = this.wrapText(cleanLine, maxWidth, font, fontSize);
-
-      for (const wLine of wrapped) {
-        if (y < margin) {
-          page = pdf.addPage([595, 842]);
-          y = page.getHeight() - margin;
-        }
-
-        page.drawText(wLine, {
-          x,
-          y,
-          size: fontSize,
-          font: font,
-          color: rgb(0, 0, 0),
-        });
-
-        y -= lineHeight;
-      }
-    }
-
-    return Buffer.from(await pdf.save());
-  }
-
-  public wrapText(text: string, maxWidth: number, font: any, size: number): string[] {
-    const words = text.split(' ');
-    const lines: string[] = [];
-    let currentLine = '';
-
-    for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const width = font.widthOfTextAtSize(testLine, size);
-
-      if (width <= maxWidth) {
-        currentLine = testLine;
-      } else {
-        if (currentLine) {
-          lines.push(currentLine);
-        }
-        currentLine = word;
-      }
-    }
-
-    if (currentLine) {
-      lines.push(currentLine);
-    }
-
-    return lines;
-  }
   public async listFiles(prefix: string): Promise<string[]> {
     const listCommand = new ListObjectsV2Command({
       Bucket: this.bucket,

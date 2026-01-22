@@ -54,8 +54,7 @@ export class CdnService {
 
     try {
       this.logger.log(`[PREPARE] Preparing environment for User: ${userId}, Class: ${className}`);
-
-      // 2. DB Logic (Delegated to Repo)
+      // 2. DB Logic
       const classEntity = await this.classesRepo.findOrCreate(userId, className);
       const classId = classEntity.classID;
 

@@ -1,6 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import axios from 'axios';
-
 
 @Injectable()
 export class QuizAiService {
@@ -44,7 +43,7 @@ export class QuizAiService {
     }
     `;
 
-    return this.callGeminiModel(prompt);
+    return this.runGeminiRequest(prompt);
   }
 
   async generateFlashcards(content: string): Promise<any> {
@@ -82,13 +81,12 @@ export class QuizAiService {
     }
     `;
 
-    return this.callGeminiModel(prompt);
+    return this.runGeminiRequest(prompt);
   }
 
   async generateOpenQuestions(content: string, fileCount: number): Promise<any> {
     this.logger.log(`Generating open questions for ${fileCount} files...`);
-    const questionsPerFile = fileCount < 3 ? 8 : 5;
-
+    
     const prompt = `
     You are an educational expert. Create an exam with open-ended questions based on the text provided.
     
@@ -118,13 +116,12 @@ export class QuizAiService {
     }
     `;
 
-    return this.callGeminiModel(prompt);
+    return this.runGeminiRequest(prompt);
   }
 
   async evaluateOpenAnswers(content: string, userAnswers: any[]): Promise<any> {
     this.logger.log('Evaluating open answers...');
 
-    // We serialize the user's answers into the prompt so Gemini can check them.
     const answersJson = JSON.stringify(userAnswers);
 
     const prompt = `
@@ -140,7 +137,9 @@ export class QuizAiService {
     1. For each answer, check if it is correct based strictly on the source text.
     2. Provide a "correct_answer" which is the ideal answer found in the text.
     3. Identify specific problems if the answer is vague, incorrect, or incomplete.
-    4. "is_correct" should be boolean.
+    4. "score" should be integer. There is 10 values: from 1 to 10. You need to choose the grade for the users answer depending on 
+    the context: if answer completely not correct and there are no good points, throw 1. If all is good, throw 10. If there are 
+    questionable answers, analize them and throw the grade.
     5. All content must be in Polish.
 
     REQUIRED JSON FORMAT (Strict JSON, no markdown):
@@ -151,7 +150,7 @@ export class QuizAiService {
           "question": "The original question text",
           "user_answer": "The student's answer",
           "correct_answer": "The ideal answer from text",
-          "is_correct": false,
+          "score": 2,
           "problems": [
             "The answer is completely wrong because...",
             "It misses the key concept of X"
@@ -161,10 +160,10 @@ export class QuizAiService {
     }
     `;
 
-    return this.callGeminiModel(prompt);
+    return this.runGeminiRequest(prompt);
   }
 
-async generateStudySummary(content: string, fileCount: number): Promise<any> {
+  async generateStudySummary(content: string, fileCount: number): Promise<any> {
     this.logger.log(`Generating block-based summary for ${fileCount} topics...`);
 
     const prompt = `
@@ -187,56 +186,95 @@ async generateStudySummary(content: string, fileCount: number): Promise<any> {
     ]
     `;
 
-    return this.callGeminiModel(prompt);
+    return this.runGeminiRequest(prompt);
   }
 
-  private async callGeminiModel(prompt: string): Promise<any> {
-    try {
-      const response = await axios.post(
-        `${this.geminiUrl}?key=${this.geminiApiKey}`,
-        {
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 8192,
+  private async runGeminiRequest(prompt: string, attempts = 3): Promise<any> {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const response = await axios.post(
+          `${this.geminiUrl}?key=${this.geminiApiKey}`,
+          {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 8192,
+              responseMimeType: "application/json" 
+            },
           },
-        },
-        { headers: { 'Content-Type': 'application/json' } }
-      );
+          { headers: { 'Content-Type': 'application/json' }, timeout: 60000 }
+        );
 
-      const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
-      return this.cleanAndParseJson(rawText);
+        const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        if (!rawText) throw new Error('Empty AI response');
 
-    } catch (error: any) {
-      this.logger.error(`Gemini Error: ${error.message}`);
-      throw new Error('Failed to generate content from AI.');
+        return this.cleanAndParseJson(rawText);
+
+      } catch (error: any) {
+        const isLast = i === attempts - 1;
+        const msg = error.message || 'Unknown error';
+        const status = error.response?.status;
+
+        const isParseError = msg.includes('JSON'); 
+        const isRateLimit = status === 429 || msg.includes('Quota');
+        const isNetwork = msg.includes('ECONN') || msg.includes('TIMEOUT');
+        
+        if (!isLast && (isParseError || isRateLimit || isNetwork)) {
+            const delay = isRateLimit ? 5000 * (i+1) : 2000;
+            this.logger.warn(`Retry (${i+1}/${attempts}) due to: ${msg}. Waiting ${delay}ms`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+        }
+
+        this.logger.error(`Failed after ${attempts} attempts. Last error: ${msg}`);
+        throw new InternalServerErrorException('AI Service failed to generate valid JSON content.');
+      }
     }
   }
 
   private cleanAndParseJson(text: string): any {
     try {
-      const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
+      // 1. Remove markdown code blocks if present
+      let cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      
+      // 2. Intelligent substring extraction (Find outer { } or [ ])
+      const startObj = cleaned.indexOf('{');
+      const startArr = cleaned.indexOf('[');
+      
+      let start = -1;
+      let end = -1;
 
-      if (parsed.summary) return { summary: parsed.summary };
-
-      if (Array.isArray(parsed)) {
-          if (parsed.length > 0 && parsed[0].type) {
-             return { summary: parsed }; 
-          }
-          if (parsed.length > 0 && parsed[0].answers) return { questions: parsed };
-          if (parsed.length > 0 && parsed[0].answer && !parsed[0].answers) return { flashcards: parsed };
-          if (parsed.length > 0 && parsed[0].user_answer) return { results: parsed };
+      if (startObj !== -1 && (startArr === -1 || startObj < startArr)) {
+          start = startObj;
+          end = cleaned.lastIndexOf('}');
+      } else if (startArr !== -1) {
+          start = startArr;
+          end = cleaned.lastIndexOf(']');
       }
 
+      if (start !== -1 && end !== -1) {
+        cleaned = cleaned.substring(start, end + 1);
+      }
+
+      const parsed = JSON.parse(cleaned);
+
+      // 3. Normalize structure (Your original mapping logic)
+      if (parsed.summary) return { summary: parsed.summary };
+      if (Array.isArray(parsed)) {
+          if (parsed.length > 0 && parsed[0].type) return { summary: parsed }; 
+          if (parsed.length > 0 && parsed[0].answers) return { questions: parsed };
+          if (parsed.length > 0 && parsed[0].answer && !parsed[0].answers) return { flashcards: parsed };
+          if (parsed.length > 0 && (parsed[0].user_answer || parsed[0].id)) return { results: parsed };
+      }
       if (parsed.questions) return { questions: parsed.questions };
       if (parsed.flashcards) return { flashcards: parsed.flashcards };
       if (parsed.results) return { results: parsed.results };
 
       return parsed;
     } catch (e) {
-      this.logger.error('JSON Parsing Error. Raw text:', text);
-      return {}; 
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      throw new Error(`JSON Parsing failed: ${errorMessage}. Raw: ${text.substring(0, 100)}...`);
     }
   }
 }

@@ -22,19 +22,15 @@ export class QuizLogicService {
   }
 
   async getTopicContent(classId: string, topicRandomId: string): Promise<string> {
-    const key = `${classId}/${topicRandomId}.pdf`;
+    const key = `${classId}/${topicRandomId}.txt`;
     
     try {
       this.logger.log(`Fetching topic from S3: ${key}`);
-      
-      const pdfBuffer = await this.getFileFromS3(key);
-      const pdfExtraction = require('pdf-extraction');
-      
-      const data = await pdfExtraction(pdfBuffer);
-      const text = data.text;
+      const fileBuffer = await this.getFileFromS3(key);
+      const text = fileBuffer.toString('utf-8');
 
       if (!text || text.trim().length < 10) {
-          this.logger.warn(`File ${key} seems to be empty or does not contain a text layer.`);
+          this.logger.warn(`File ${key} seems to be empty.`);
           return ""; 
       }
       return text.trim();

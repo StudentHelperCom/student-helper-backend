@@ -25,12 +25,12 @@ export class ProcessingController {
 
   @Post('merge')
   async mergePdfs(@Body() body: { classId: string }) {
-    return this.svc.mergeFinalPdfsS3(body.classId);
-  }
+    return this.svc.mergeFinalContentS3(body.classId);
+  }c
 
   @Post('split')
   async splitMerged(@Body() body: { classId: string }) {
-    return this.svc.splitMergedPdf(body.classId);
+    return this.svc.mergeFinalContentS3(body.classId);
   }
 
   @Get('status/:classId')

@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ProcessingService } from './processing.service';
 import { ProcessingController } from './processing.controller';
-import { ProcessingHelpers } from './helpers/processing.helpers';
-import { ProcessingAi } from './helpers/processing.ai';
+import { ProcessingLogicService } from './processing-logic.service';
+import { ProcessingAiService } from './processing-ai.service';
 import { SharedDatabaseModule } from '@repo/database';
 import { processingConfigSchema } from '@repo/common';
 
@@ -11,8 +11,8 @@ import { processingConfigSchema } from '@repo/common';
   controllers: [ProcessingController],
   providers: [
     ProcessingService, 
-    ProcessingHelpers, 
-    ProcessingAi
+    ProcessingLogicService, 
+    ProcessingAiService
   ],
   imports: [
     ConfigModule.forRoot({
