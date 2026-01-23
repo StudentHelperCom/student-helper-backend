@@ -135,36 +135,34 @@ RULES:
 
         } catch (error: any) {
             const status = error.response?.status;
-            const message = error.message || '';
-            const isRateLimit = status === 429 || message.includes('Quota exceeded');
-            
-            const isNetworkError = 
-                message.includes('ECONNRESET') || 
-                message.includes('ETIMEDOUT') ||
-                status === 503;
+            const msg = error.message || '';
+
+            const isRateLimit = status === 429 || msg.includes('Quota') || msg.includes('Resource has been exhausted');
+            const isNetwork = msg.includes('ECONN') || msg.includes('ETIMEDOUT') || status === 503;
+            const isParseError = msg.includes('JSON') || msg.includes('SyntaxError') || msg.includes('Unexpected token');
 
             if (i === attempts - 1) {
-                 this.logger.error(`Gemini Fatal Error after ${attempts} attempts: ${message}`);
-                 throw new Error(`Gemini API failed: ${error.response?.data?.error?.message || message}`);
+                this.logger.error(`Gemini Fatal Error after ${attempts} attempts. Last error: ${msg}`);
+                throw new InternalServerErrorException(`AI Processing failed: ${error.response?.data?.error?.message || msg}`);
             }
 
-            if (isRateLimit) {
-                const waitTime = 20000 + (i * 5000); 
-                this.logger.warn(`Gemini Quota Exceeded (Attempt ${i+1}/${attempts}). Cooling down for ${waitTime/1000}s...`);
-                await this.sleep(waitTime);
-                continue;
-            }
+            if (isRateLimit || isNetwork || isParseError) {
+                let waitTime = 0;
 
-            if (isNetworkError) {
-                const waitTime = 2000 * (i + 1);
-                this.logger.warn(`Gemini Network Error (Attempt ${i+1}/${attempts}): ${message}`);
-                await this.sleep(waitTime); 
+                if (isRateLimit) {
+                    waitTime = 10000 + (i * 5000);
+                    this.logger.warn(`Gemini Quota Exceeded (Attempt ${i + 1}/${attempts}). Cooling down for ${waitTime / 1000}s...`);
+                } else {
+                    waitTime = 2000 * (i + 1);
+                    this.logger.warn(`Retryable Error (${isParseError ? 'JSON/Format' : 'Network'}) (Attempt ${i + 1}/${attempts}): ${msg}. Waiting ${waitTime / 1000}s...`);
+                }
+
+                await new Promise(r => setTimeout(r, waitTime));
                 continue;
             }
-            
             throw error;
-        }
-    }
+          }
+      } 
     throw new Error('Unreachable code');
   }
 

@@ -212,24 +212,35 @@ export class QuizAiService {
         return this.cleanAndParseJson(rawText);
 
       } catch (error: any) {
-        const isLast = i === attempts - 1;
-        const msg = error.message || 'Unknown error';
-        const status = error.response?.status;
+          const status = error.response?.status;
+          const msg = error.message || '';
 
-        const isParseError = msg.includes('JSON'); 
-        const isRateLimit = status === 429 || msg.includes('Quota');
-        const isNetwork = msg.includes('ECONN') || msg.includes('TIMEOUT');
-        
-        if (!isLast && (isParseError || isRateLimit || isNetwork)) {
-            const delay = isRateLimit ? 5000 * (i+1) : 2000;
-            this.logger.warn(`Retry (${i+1}/${attempts}) due to: ${msg}. Waiting ${delay}ms`);
-            await new Promise(r => setTimeout(r, delay));
-            continue;
-        }
+          const isRateLimit = status === 429 || msg.includes('Quota') || msg.includes('Resource has been exhausted');
+          const isNetwork = msg.includes('ECONN') || msg.includes('ETIMEDOUT') || status === 503;
+          const isParseError = msg.includes('JSON') || msg.includes('SyntaxError') || msg.includes('Unexpected token');
 
-        this.logger.error(`Failed after ${attempts} attempts. Last error: ${msg}`);
-        throw new InternalServerErrorException('AI Service failed to generate valid JSON content.');
-      }
+          if (i === attempts - 1) {
+              this.logger.error(`Gemini Fatal Error after ${attempts} attempts. Last error: ${msg}`);
+              throw new InternalServerErrorException(`AI Processing failed: ${error.response?.data?.error?.message || msg}`);
+          }
+
+          if (isRateLimit || isNetwork || isParseError) {
+              let waitTime = 0;
+
+              if (isRateLimit) {
+                  waitTime = 10000 + (i * 5000);
+                  this.logger.warn(`Gemini Quota Exceeded (Attempt ${i + 1}/${attempts}). Cooling down for ${waitTime / 1000}s...`);
+              } else {
+                  waitTime = 2000 * (i + 1);
+                  this.logger.warn(`Retryable Error (${isParseError ? 'JSON/Format' : 'Network'}) (Attempt ${i + 1}/${attempts}): ${msg}. Waiting ${waitTime / 1000}s...`);
+              }
+
+              await new Promise(r => setTimeout(r, waitTime));
+              continue;
+          }
+
+          throw error;
+      }    
     }
   }
 
