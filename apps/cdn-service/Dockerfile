@@ -4,7 +4,8 @@
 FROM node:20-slim AS pruner
 WORKDIR /app
 
-RUN npm install -g turbo
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g turbo
 COPY . .
 RUN turbo prune --scope=cdn-service --docker
 
@@ -15,7 +16,9 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 # Install build dependencies for canvas on Debian
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
@@ -23,17 +26,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango1.0-dev \
     libjpeg-dev \
     libgif-dev \
-    librsvg2-dev \
-    && rm -rf /var/lib/apt/lists/*
+    librsvg2-dev
 
 COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 
 # Install dependencies deterministically
-RUN npm ci --legacy-peer-deps
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --legacy-peer-deps --prefer-offline
 
 COPY --from=pruner /app/out/full/ .
-COPY --from=pruner /app/tsconfig.base.json ./tsconfig.base.json
 COPY --from=pruner /app/turbo.json ./turbo.json
 # Copy typescript-config package manually (not included by turbo prune)
 COPY --from=pruner /app/packages/config/typescript-config ./packages/config/typescript-config
@@ -47,7 +49,9 @@ FROM node:20-slim AS deps
 WORKDIR /app
 
 # Install build dependencies for canvas
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
@@ -55,15 +59,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango1.0-dev \
     libjpeg-dev \
     libgif-dev \
-    librsvg2-dev \
-    && rm -rf /var/lib/apt/lists/*
+    librsvg2-dev
 
 COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 
 # Install production dependencies and clean up
-RUN npm ci --legacy-peer-deps --omit=dev && \
-    npm cache clean --force && \
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --legacy-peer-deps --omit=dev --prefer-offline && \
     # Remove unnecessary files from node_modules
     find /app/node_modules -name "*.md" -delete && \
     find /app/node_modules -name "LICENSE*" -delete && \
@@ -82,7 +85,9 @@ FROM node:20-slim AS runner
 WORKDIR /app
 
 # Install runtime libraries for canvas and Tesseract
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
@@ -91,8 +96,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-2 \
     tesseract-ocr \
     tesseract-ocr-eng \
-    tesseract-ocr-pol \
-    && rm -rf /var/lib/apt/lists/*
+    tesseract-ocr-pol
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nestjs

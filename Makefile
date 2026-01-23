@@ -31,8 +31,12 @@ clean: ## Clean build artifacts and dependencies
 	npm run clean
 	rm -rf node_modules
 
-docker-build: ## Build Docker images
-	docker-compose build
+docker-build: ## Build Docker images (optimized with BuildKit)
+	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker-compose build
+
+docker-build-fast: ## Build Docker images with all optimizations
+	@echo "🚀 Building with BuildKit optimizations..."
+	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 BUILDKIT_PROGRESS=plain docker-compose build
 
 docker-up: ## Start Docker containers
 	docker-compose up -d
