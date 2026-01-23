@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Class } from '../entities/class.entity.js';
-import { Topic } from '../entities/topic.entity.js';
 import { CreateClassDto } from '@repo/common'; 
 
 @Injectable()
@@ -27,35 +26,6 @@ export class ClassesRepository {
     });
   }
 
-  /**
-   * Create or find class for file upload.
-   * Runs in transaction.
-   */
-  async findOrCreate(
-    userId: string,
-    className: string
-  ): Promise<Class> {
-    return this.dataSource.transaction(async (manager) => {
-      let classEntity = await manager.findOne(Class, {
-        where: { user: { userID: userId }, name: className },
-      });
-
-      if (!classEntity) {
-        classEntity = manager.create(Class, {
-          user: { userID: userId } as any,
-          name: className,
-        });
-        await manager.save(classEntity);
-      }
-
-      return classEntity;
-    });
-  }
-
-  /**
-   * Create class with existence check.
-   * Throws error if class already exists. Runs in transaction.
-   */
   async create(
     userId: string,
     data: CreateClassDto
@@ -80,28 +50,24 @@ export class ClassesRepository {
     });
   }
 
-  /**
-   * Delete class with all related topics.
-   * Uses pessimistic lock. Runs in transaction.
-   */
-async deleteWithTopics(classId: string, userId: string): Promise<void> {
-  return this.dataSource.transaction(async (manager) => {
-    const classEntity = await manager
-      .createQueryBuilder(Class, 'class')
-      .innerJoinAndSelect('class.user', 'user')
-      .setLock('pessimistic_write')
-      .where('class.classID = :classId', { classId })
-      .getOne();
+  async deleteWithTopics(classId: string, userId: string): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      const classEntity = await manager
+        .createQueryBuilder(Class, 'class')
+        .innerJoinAndSelect('class.user', 'user')
+        .setLock('pessimistic_write')
+        .where('class.classID = :classId', { classId })
+        .getOne();
 
-    if (!classEntity) {
-      throw new Error('CLASS_NOT_FOUND');
-    }
+      if (!classEntity) {
+        throw new Error('CLASS_NOT_FOUND');
+      }
 
-    if (classEntity.user.userID !== userId) {
-      throw new Error('FORBIDDEN');
-    }
-    
-    await manager.delete(Class, classId);
-  });
+      if (classEntity.user.userID !== userId) {
+        throw new Error('FORBIDDEN');
+      }
+      
+      await manager.delete(Class, classId);
+    });
   }
 }

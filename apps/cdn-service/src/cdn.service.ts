@@ -17,7 +17,6 @@ import {
   ListObjectsV2CommandOutput 
 } from '@aws-sdk/client-s3';
 import { createWorker } from 'tesseract.js';
-// DataSource removed from imports
 import { ClassesRepository, TopicsRepository } from '@repo/database'; 
 import { CreateClassDto } from '@repo/common';
 
@@ -54,8 +53,14 @@ export class CdnService {
 
     try {
       this.logger.log(`[PREPARE] Preparing environment for User: ${userId}, Class: ${className}`);
-      // 2. DB Logic
-      const classEntity = await this.classesRepo.findOrCreate(userId, className);
+      
+      const userClasses = await this.classesRepo.findByUserId(userId);
+      let classEntity = userClasses.find(c => c.name === className);
+
+      if (!classEntity) {
+        classEntity = await this.classesRepo.create(userId, { className } as CreateClassDto);
+      }
+      
       const classId = classEntity.classID;
 
       // 3. S3 Logic (Independent of DB transaction)
@@ -219,8 +224,6 @@ export class CdnService {
       throw new InternalServerErrorException('Failed to delete class');
     }
   }
-  
-  // --- Private Helpers ---
 
   private async cleanupLocalTempStorage() {
     try {
