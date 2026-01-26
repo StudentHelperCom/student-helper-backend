@@ -27,7 +27,6 @@ async function bootstrap() {
     .setTitle('Student Helper API')
     .setDescription('Microservice Gateway for Student Helper App')
     .setVersion('1.0')
-    .addTag('CDN')
     .addBearerAuth()
     .build();
 

@@ -10,4 +10,4 @@ build
 .idea
 .DS_Store
 Thumbs.db
-apps/cdn-service/temp_processing/*
+apps/cdn/temp_processing/*

@@ -21,6 +21,7 @@ export class ProcessingLogicService {
   private readonly bucket: string;
 
   constructor(private readonly configService: ConfigService) {
+    // Service Initialization & S3 Client Setup
     this.s3 = new S3Client({
       region: this.configService.getOrThrow<string>('AWS_REGION'),
       credentials: {
@@ -37,6 +38,7 @@ export class ProcessingLogicService {
   }
 
   public sanitizeFilename(filename: string): string {
+    // Filename Sanitization & Normalization
     const baseName = path.basename(filename, path.extname(filename));
     const ext = path.extname(filename);
     const safeName = baseName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 100);
@@ -44,6 +46,7 @@ export class ProcessingLogicService {
   }
 
   public async getFile(key: string): Promise<Buffer> {
+    // S3 Object Retrieval (Download)
     const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
     const stream = res.Body as Readable;
     const chunks: Buffer[] = [];
@@ -52,6 +55,7 @@ export class ProcessingLogicService {
   }
 
   public async uploadFile(key: string, buffer: Buffer, contentType?: string) {
+    // S3 Object Upload with Content-Type Detection
     if (!contentType) {
       if (key.endsWith('.pdf')) contentType = 'application/pdf';
       else if (key.endsWith('.txt')) contentType = 'text/plain; charset=utf-8';
@@ -61,6 +65,7 @@ export class ProcessingLogicService {
   }
 
   public async deleteFolderContents(prefix: string) {
+    // Bulk Deletion (Folder Cleanup)
     try {
       let continuationToken: string | undefined = undefined;
       do {
@@ -87,6 +92,7 @@ export class ProcessingLogicService {
   }
 
   public async checkFileExists(key: string): Promise<boolean> {
+    // Existence Check (HeadObject)
     try {
       await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return true;
@@ -97,6 +103,7 @@ export class ProcessingLogicService {
   }
   
   public async isFolderNotEmpty(prefix: string): Promise<boolean> {
+    // Folder Content Verification
     const command = new ListObjectsV2Command({
       Bucket: this.bucket,
       Prefix: prefix,
@@ -107,6 +114,7 @@ export class ProcessingLogicService {
   }
 
   public async deleteFile(key: string) {
+    // Single File Deletion
     await this.s3.send(new DeleteObjectsCommand({
         Bucket: this.bucket,
         Delete: {
@@ -116,6 +124,7 @@ export class ProcessingLogicService {
   }
 
   public async getFileWithRetry(key: string, attempts = 3): Promise<Buffer> {
+    // Resilient Retrieval (Retry Logic)
     for (let i = 0; i < attempts; i++) {
         try {
             return await this.getFile(key);

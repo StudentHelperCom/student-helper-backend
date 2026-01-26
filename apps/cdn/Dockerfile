@@ -7,7 +7,7 @@ WORKDIR /app
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g turbo
 COPY . .
-RUN turbo prune --scope=cdn-service --docker
+RUN turbo prune --scope=cdn --docker
 
 # ==========================================
 # STAGE 2: INSTALL & BUILD
@@ -40,7 +40,7 @@ COPY --from=pruner /app/turbo.json ./turbo.json
 # Copy typescript-config package manually (not included by turbo prune)
 COPY --from=pruner /app/packages/config/typescript-config ./packages/config/typescript-config
 
-RUN npx turbo run build --filter=cdn-service...
+RUN npx turbo run build --filter=cdn...
 
 # ==========================================
 # STAGE 2.5: PRODUCTION DEPENDENCIES
@@ -109,9 +109,9 @@ COPY --from=builder --chown=nestjs:nodejs /app/packages/database/package.json ./
 
 # 2. Copy the App to its original deep location
 # Note: Docker creates the parent directories automatically
-COPY --from=builder /app/apps/cdn-service/package.json ./apps/cdn-service/package.json
-COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/dist ./apps/cdn-service/dist
-COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/*.traineddata ./apps/cdn-service/
+COPY --from=builder /app/apps/cdn/package.json ./apps/cdn/package.json
+COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn/dist ./apps/cdn/dist
+COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn/*.traineddata ./apps/cdn/
 
 # 3. Copy Production Node Modules only (already cleaned in deps stage)
 COPY --from=deps --chown=nestjs:nodejs /app/node_modules ./node_modules
@@ -132,4 +132,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
 # FIX: Update the start command to point to the deep file
-CMD ["node", "apps/cdn-service/dist/main.js"]
+CMD ["node", "apps/cdn/dist/main.js"]

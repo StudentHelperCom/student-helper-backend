@@ -10,14 +10,18 @@ export class ProcessingController {
   @Get('health')
   healthCheck() { return 'OK'; }
   
-  @Post('start-workflow')
+  // ===========================================================================
+  // MAIN ENDPOINT
+  // ===========================================================================
+  @Post('start-workflow') 
   async startWorkflow(@Body() body: { userId: string; classId: string }) {
     this.logger.log(`Received workflow request for Class ID: ${body.classId}`);
-    // Only classId is needed for S3 paths now
     return this.svc.executeFullWorkflow(body.classId);
   }
 
-  // Keeping other endpoints compatible
+  // ===========================================================================
+  // HELPER ENDPOINTS
+  // ===========================================================================
   @Post('run')
   runProcessing(@Body() body: { classId: string }) {
     return this.svc.process(body.classId);

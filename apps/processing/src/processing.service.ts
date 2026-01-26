@@ -25,6 +25,7 @@ export class ProcessingService {
   ) {}
 
   private async updateStatusMarker(classId: string, state: ProcessingStatus['state'], details?: any) {
+    // 1. Status Tracking (Updates 'status.json' in S3)
     const statusKey = `${classId}/status.json`;
     const statusData: ProcessingStatus = {
         state,
@@ -45,7 +46,7 @@ export class ProcessingService {
   async executeFullWorkflow(classId: string) {
     this.logger.log(`[Workflow] Starting execution for class ID: ${classId}`);
     
-    // 1. Mark as PROCESSING start
+    // 2. Workflow Initialization & Pre-cleanup
     await this.updateStatusMarker(classId, 'processing');
 
     this.logger.log(`[Workflow] Ensuring clean state (final folder) for ${classId}`);
@@ -57,6 +58,7 @@ export class ProcessingService {
 
     let processResult;
     try {
+      // 3. Step 1: Batch Processing (File to AI Text)
       this.logger.log(`[Step 1] Starting batch processing...`);
       processResult = await this.process(classId);
       
@@ -75,6 +77,7 @@ export class ProcessingService {
 
     let mergeResult;
     try {
+      // 4. Step 2: Merge Processed Content
       this.logger.log(`[Step 2] Starting merge...`);
       mergeResult = await this.mergeFinalContentS3(classId); // renamed for clarity
       if (mergeResult.status === 'error') {
@@ -92,6 +95,7 @@ export class ProcessingService {
 
     let splitResult;
     try {
+      // 5. Step 3: Split into Topics & Update DB
       this.logger.log(`[Step 3] Starting split...`);
       splitResult = await this.splitMergedContent(classId); // renamed for clarity
       this.logger.log(`[Step 3] Completed successfully.`);
@@ -103,13 +107,14 @@ export class ProcessingService {
 
     this.logger.log(`[Workflow] Post-execution cleanup...`);
     try {
+        // 6. Post-Execution Cleanup (Remove intermediate files)
         await this.helpers.deleteFolderContents(`${classId}/processed/`);
         this.logger.log('[Workflow] Post-cleanup successful.');
     } catch (error: any) {
         this.logger.warn(`[Workflow] Post-cleanup warning: ${error.message}`);
     }
 
-    // Determine Final Status
+    // 7. Final Workflow State Determination
     const finalState = (processResult.status === 'partial_error') ? 'partial_error' : 'completed';
     
     await this.updateStatusMarker(classId, finalState, { 
@@ -129,6 +134,7 @@ export class ProcessingService {
   }
 
   async checkStatus(classId: string) {
+    // 8. Status Polling & Legacy Fallbacks
     const statusKey = `${classId}/status.json`;
     
     try {
@@ -162,7 +168,6 @@ export class ProcessingService {
                 };
         }
     } catch (e) {
-        // Fallback checks
         const topicCount = await this.topicsRepo.countByClassId(classId);
         
         if (topicCount > 0) {
@@ -181,6 +186,7 @@ export class ProcessingService {
   }
 
   async process(classId: string) {
+    // 9. Batch Processing Logic (Controls concurrency)
     const uploadsPrefix = `${classId}/uploads/`;
 
     let allFiles = await this.helpers.listFiles(uploadsPrefix);
@@ -224,6 +230,7 @@ export class ProcessingService {
   }
 
   private async processSingleFile(classId: string, fileKey: string) {
+    // 10. Single File Handling (Input retrieval -> AI -> Output)
     const ext = path.extname(fileKey).toLowerCase();
     const baseName = path.basename(fileKey, ext);
 
@@ -269,8 +276,8 @@ export class ProcessingService {
     }
   }
 
-  // Renamed from mergeFinalPdfsS3 to mergeFinalContentS3 since we don't output PDF anymore
   async mergeFinalContentS3(classId: string) {
+    // 11. Content Aggregation (Combine all partial TXTs)
     const rootFolderPrefix = `${classId}/`;
     const finalSubfolderPrefix = `${rootFolderPrefix}final/`;
 
@@ -325,8 +332,8 @@ export class ProcessingService {
     };
   }
 
-  // Renamed from splitMergedPdf to splitMergedContent
   async splitMergedContent(classId: string) {
+    // 12. Topic Parsing & Generation
     const rootFolderPrefix = `${classId}/`;
     const mergedTxtKey = `${rootFolderPrefix}Final_Merged_${classId}.txt`;
 
@@ -355,6 +362,7 @@ export class ProcessingService {
     let currentContent: string[] = [];
     let isInsideLiterature = false;
 
+    // 13. Regex Parsing Loop (Detects '1. Topic Name' pattern)
     for (const line of lines) {
       const trimmed = line.trim();
       const match = trimmed.match(/^(\d+)\.\s+(.*)/); 
@@ -415,19 +423,15 @@ export class ProcessingService {
     try {
       this.logger.log(`[Split] Generating TXTs and uploading to S3...`);
 
+      // 14. File Upload & Database Synchronization
       const uploadPromises = finalTopics.map(async (topic) => {
         const newTopicId = randomUUID(); 
         const fileName = `${newTopicId}.txt`; // changed to .txt
         const finalKey = `${rootFolderPrefix}${fileName}`;
         
-        // No more buildPdf, just raw string content
         const txtBuffer = Buffer.from(topic.content, 'utf-8');
-        
         await this.helpers.uploadFile(finalKey, txtBuffer, 'text/plain; charset=utf-8');
-        
         generatedFiles.push(finalKey);
-        
-        // Create topic entity for repository
         const newTopic = this.topicsRepo.prepare({
             topicID: newTopicId,          
             name: topic.name,          
@@ -439,9 +443,7 @@ export class ProcessingService {
       await Promise.all(uploadPromises);
 
       this.logger.log(`[Split] Updating database topics for class ${classId}...`);
-      
       await this.topicsRepo.replaceForClass(classId, topicEntities);
-      
       this.logger.log(`[Split] Successfully saved ${topicEntities.length} new topics.`);
       return {
           status: 'ok',

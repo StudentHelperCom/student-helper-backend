@@ -6,11 +6,11 @@ services:
   auth:
     build:
       context: .
-      dockerfile: apps/auth-service/Dockerfile
-    container_name: auth-service
+      dockerfile: apps/auth/Dockerfile
+    container_name: auth
     restart: unless-stopped
     env_file:
-      - apps/auth-service/.env
+      - apps/auth/.env
     ports:
       - "3002:3002"
     environment:
@@ -23,14 +23,14 @@ services:
       timeout: 3s
       retries: 3
 
-  cdn-service:
+  cdn:
     build:
       context: .
-      dockerfile: apps/cdn-service/Dockerfile
-    container_name: cdn-service
+      dockerfile: apps/cdn/Dockerfile
+    container_name: cdn
     restart: unless-stopped
     env_file:
-      - apps/cdn-service/.env
+      - apps/cdn/.env
     ports:
       - "3001:3001"
     environment:
@@ -50,11 +50,11 @@ services:
   processing:
     build:
       context: .
-      dockerfile: apps/processing-service/Dockerfile
-    container_name: processing-service
+      dockerfile: apps/processing/Dockerfile
+    container_name: processing
     restart: unless-stopped
     env_file:
-      - apps/processing-service/.env
+      - apps/processing/.env
     ports:
       - "3003:3003"
     environment:
@@ -67,14 +67,14 @@ services:
       timeout: 3s
       retries: 3
 
-  quiz-service:
+  quiz:
     build:
       context: .
-      dockerfile: apps/quiz-service/Dockerfile
-    container_name: quiz-service
+      dockerfile: apps/quiz/Dockerfile
+    container_name: quiz
     restart: unless-stopped
     env_file:
-      - apps/quiz-service/.env
+      - apps/quiz/.env
     ports:
       - "3004:3004"
     environment:
@@ -99,18 +99,18 @@ services:
       - "4001:4001"
     environment:
       NODE_ENV: development
-      CDN_URL: http://cdn-service:3001
-      AUTH_URL: http://auth-service:3002
-      PROCESSING_URL: http://processing-service:3003
-      QUIZ_SERVICE_URL: http://quiz-service:3004
+      CDN_URL: http://cdn:3001
+      AUTH_URL: http://auth:3002
+      PROCESSING_URL: http://processing:3003
+      QUIZ_SERVICE_URL: http://quiz:3004
     depends_on:
       auth:
         condition: service_healthy
-      cdn-service:
+      cdn:
         condition: service_healthy
       processing:
         condition: service_healthy
-      quiz-service:
+      quiz:
         condition: service_healthy
     networks:
       - backend

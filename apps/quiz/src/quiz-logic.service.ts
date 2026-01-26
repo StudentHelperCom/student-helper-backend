@@ -10,6 +10,7 @@ export class QuizLogicService {
   private readonly s3: S3Client;
 
   constructor(private readonly configService: ConfigService) {
+    // 1. Service Setup & S3 Client Initialization
     this.bucket = this.configService.getOrThrow<string>('AWS_S3_BUCKET');
     
     this.s3 = new S3Client({
@@ -22,6 +23,7 @@ export class QuizLogicService {
   }
 
   async getTopicContent(classId: string, topicRandomId: string): Promise<string> {
+    // 2. Topic Content Retrieval (Wrapper)
     const key = `${classId}/${topicRandomId}.txt`;
     
     try {
@@ -42,6 +44,7 @@ export class QuizLogicService {
   }
 
   private async getFileFromS3(key: string): Promise<Buffer> {
+    // 3. Low-Level S3 Download & Stream Conversion
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     const response = await this.s3.send(command);
     const stream = response.Body as Readable;

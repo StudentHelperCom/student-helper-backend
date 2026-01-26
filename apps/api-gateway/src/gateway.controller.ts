@@ -61,9 +61,6 @@ export class CdnController {
       return response.data;
   }
   
-  // -----------------------------------------------------------------------
-  // ENDPOINT 1: UPLOAD ONLY (Does NOT trigger processing)
-  // -----------------------------------------------------------------------
   @Post('test-upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files', 10))
@@ -85,7 +82,6 @@ export class CdnController {
     @Req() req
   ) {
     const user = req.user;
-    // Points to the pure upload endpoint in CDN
     const cdnUrl = `${process.env.CDN_URL!}/cdn/test-upload`; 
 
     const payload = files.map(file => ({
@@ -99,9 +95,6 @@ export class CdnController {
     return response.data;
   }
 
-  // -----------------------------------------------------------------------
-  // ENDPOINT 2: UPLOAD AND PROCESS (Legacy behavior)
-  // -----------------------------------------------------------------------
   @Post('upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files', 10))
@@ -283,8 +276,6 @@ export class QuizController {
   })
   async generateQuiz(@Body() body: { mode: string; topicIds: string[] }) {
     const quizServiceUrl = `${process.env.QUIZ_SERVICE_URL!}/quiz/generate`;
-
-    // Increased timeout for AI generation
     const response = await firstValueFrom(
       this.httpService.post(quizServiceUrl, body, { timeout: 60000 }) 
     );

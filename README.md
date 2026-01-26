@@ -8,9 +8,9 @@ This monorepo contains 5 microservices:
 
 - **api-gateway** (Port 4001) - Main API gateway with Swagger documentation
 - **auth** (Port 3002) - Authentication & user management  
-- **cdn-service** (Port 3001) - File upload, OCR processing, and S3 integration
+- **cdn** (Port 3001) - File upload, OCR processing, and S3 integration
 - **processing** (Port 3003) - AI-powered content processing with Gemini AI
-- **quiz-service** (Port 3004) - Automated quiz generation
+- **quiz** (Port 3004) - Automated quiz generation
 
 ## 🚀 Quick Start
 
@@ -71,7 +71,7 @@ npm run build -- --filter=auth
 npm run test -- --filter=auth
 
 # Check service in isolation
-npm run lint -- --filter=cdn-service
+npm run lint -- --filter=cdn
 npm run typecheck -- --filter=processing
 ```
 
@@ -178,9 +178,9 @@ student-helper-backend/
 ├── apps/                      # Microservices
 │   ├── api-gateway/          # API Gateway (Port 4001)
 │   ├── auth/                 # Auth Service (Port 3002)
-│   ├── cdn-service/          # CDN Service (Port 3001)
+│   ├── cdn/          # CDN Service (Port 3001)
 │   ├── processing/           # Processing Service (Port 3003)
-│   └── quiz-service/         # Quiz Service (Port 3004)
+│   └── quiz/         # Quiz Service (Port 3004)
 ├── packages/                  # Shared packages
 │   ├── common/               # Shared utilities & DTOs
 │   ├── database/             # Database entities & config
@@ -207,9 +207,9 @@ Create a `.env.production` file or use Render's dashboard to set:
 2. Create a new Web Service for each microservice:
    - **api-gateway**: `apps/api-gateway/Dockerfile`, Port 4001
    - **auth**: `apps/auth/Dockerfile`, Port 3002
-   - **cdn-service**: `apps/cdn-service/Dockerfile`, Port 3001
+   - **cdn**: `apps/cdn/Dockerfile`, Port 3001
    - **processing**: `apps/processing/Dockerfile`, Port 3003
-   - **quiz-service**: `apps/quiz-service/Dockerfile`, Port 3004
+   - **quiz**: `apps/quiz/Dockerfile`, Port 3004
 
 3. Configure environment variables for each service
 4. Deploy!

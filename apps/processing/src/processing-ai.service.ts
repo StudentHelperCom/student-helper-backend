@@ -12,8 +12,10 @@ export class ProcessingAiService {
   }
   
   public async askGeminiWithRetry(txt: Buffer, pdf: Buffer, attempts = 5): Promise<string> {
+    // 1. Data Preparation: Convert buffers to strings/base64 for AI consumption
     const textContent = txt.toString();
     
+    // 2. Prompt Engineering: Construct the instruction payload for topic extraction
     const parts: any[] = [
         {
           text: `ANALYZE THIS EDUCATIONAL CONTENT AND ORGANIZE IT INTO NUMBERED TOPICS:
@@ -56,6 +58,7 @@ export class ProcessingAiService {
         }
     ];
 
+    // 3. Multimodal Integration: Attach PDF as inline data if available
     if (pdf && pdf.length > 0) {
         const pdfBase64 = pdf.toString('base64');
         parts.push({
@@ -65,10 +68,13 @@ export class ProcessingAiService {
           }
         });
     }
+    
+    // 4. Execution: Initiate the AI request with retry logic
     return this.runGeminiRequest(parts, 'text', attempts);
   }
 
   public async askGeminiToMerge(allContent: string): Promise<string> {
+    // 1. Prompt Engineering: Construct the instruction payload for content merging
     const parts = [
         {
             text: `MERGE AND DEDUPLICATE THIS EDUCATIONAL CONTENT:
@@ -110,12 +116,14 @@ RULES:
         }
     ];
 
+    // 2. Execution: Initiate the AI request with retry logic
     return this.runGeminiRequest(parts, 'text');
   }
 
   private async runGeminiRequest(parts: any[], expectedType: 'text', attempts = 5): Promise<string> {
     for (let i = 0; i < attempts; i++) {
         try {
+            // 1. API Call: Send payload to Google Gemini via REST
             const response = await axios.post(
                 `${this.geminiUrl}?key=${this.geminiApiKey}`,
                 {
@@ -131,42 +139,50 @@ RULES:
                 }
             );
 
+            // 2. Result Extraction: Parse the AI response structure
             return this.extractTextFromResponse(response);
 
         } catch (error: any) {
+            // 3. Error Analysis: Determine if the error is transient or fatal
             const status = error.response?.status;
-            const msg = error.message || '';
+            const message = error.message || '';
+            const isRateLimit = status === 429 || message.includes('Quota exceeded');
+            
+            const isNetworkError = 
+                message.includes('ECONNRESET') || 
+                message.includes('ETIMEDOUT') ||
+                status === 503;
 
-            const isRateLimit = status === 429 || msg.includes('Quota') || msg.includes('Resource has been exhausted');
-            const isNetwork = msg.includes('ECONN') || msg.includes('ETIMEDOUT') || status === 503;
-            const isParseError = msg.includes('JSON') || msg.includes('SyntaxError') || msg.includes('Unexpected token');
-
+            // 4. Failure Handling: Stop if max attempts reached
             if (i === attempts - 1) {
-                this.logger.error(`Gemini Fatal Error after ${attempts} attempts. Last error: ${msg}`);
-                throw new InternalServerErrorException(`AI Processing failed: ${error.response?.data?.error?.message || msg}`);
+                 this.logger.error(`Gemini Fatal Error after ${attempts} attempts: ${message}`);
+                 throw new Error(`Gemini API failed: ${error.response?.data?.error?.message || message}`);
             }
 
-            if (isRateLimit || isNetwork || isParseError) {
-                let waitTime = 0;
-
-                if (isRateLimit) {
-                    waitTime = 10000 + (i * 5000);
-                    this.logger.warn(`Gemini Quota Exceeded (Attempt ${i + 1}/${attempts}). Cooling down for ${waitTime / 1000}s...`);
-                } else {
-                    waitTime = 2000 * (i + 1);
-                    this.logger.warn(`Retryable Error (${isParseError ? 'JSON/Format' : 'Network'}) (Attempt ${i + 1}/${attempts}): ${msg}. Waiting ${waitTime / 1000}s...`);
-                }
-
-                await new Promise(r => setTimeout(r, waitTime));
+            // 5. Backoff Strategy: Apply exponential wait for rate limits/network issues
+            if (isRateLimit) {
+                const waitTime = 20000 + (i * 5000); 
+                this.logger.warn(`Gemini Quota Exceeded (Attempt ${i+1}/${attempts}). Cooling down for ${waitTime/1000}s...`);
+                await this.sleep(waitTime);
                 continue;
             }
+
+            if (isNetworkError) {
+                const waitTime = 2000 * (i + 1);
+                this.logger.warn(`Gemini Network Error (Attempt ${i+1}/${attempts}): ${message}`);
+                await this.sleep(waitTime); 
+                continue;
+            }
+            
+            // 6. Immediate Failure: Non-retriable errors (e.g., 400 Bad Request)
             throw error;
-          }
-      } 
+        }
+    }
     throw new Error('Unreachable code');
   }
 
   private extractTextFromResponse(res: any): string {
+    // 1. Response Parsing: Navigate nested JSON to find the text candidate
     if (res.data.candidates?.[0]?.content?.parts?.[0]?.text) {
         return res.data.candidates[0].content.parts[0].text;
     } else if (res.data.contents?.[0]?.parts?.[0]?.text) {

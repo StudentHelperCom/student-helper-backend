@@ -54,6 +54,7 @@ export class CdnService {
     try {
       this.logger.log(`[PREPARE] Preparing environment for User: ${userId}, Class: ${className}`);
       
+      // 2. Finding existing class, if no - create
       const userClasses = await this.classesRepo.findByUserId(userId);
       let classEntity = userClasses.find(c => c.name === className);
 

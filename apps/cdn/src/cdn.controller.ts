@@ -18,7 +18,11 @@ export class CdnController {
 
   @Get('health')
   healthCheck() { return 'OK'; }
-  
+
+  // ===========================================================================
+  // MAIN ENDPOINTS
+  // ===========================================================================
+
   @Post('test-upload')
   @ApiOperation({ summary: 'Upload batch of files ONLY (No processing triggered)' })
   @ApiResponse({ status: 201, description: 'Files uploaded successfully.' })
@@ -87,7 +91,7 @@ export class CdnController {
   }
 
   // ===========================================================================
-  // OTHER ENDPOINTS
+  // HELPER ENDPOINTS
   // ===========================================================================
 
   @Post('create-class')

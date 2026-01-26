@@ -29,4 +29,4 @@ build
 Thumbs.db
 
 # Specific to your CDN service (Avoid baking temp files into the image)
-apps/cdn-service/temp_processing/*
+apps/cdn/temp_processing/*

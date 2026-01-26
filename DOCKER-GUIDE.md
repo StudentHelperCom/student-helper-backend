@@ -78,9 +78,9 @@ docker ps
 |---------|---------|----------------------|
 | **api-gateway** | Routes requests to microservices, handles JWT validation | None |
 | **auth** | User authentication, JWT token generation | PostgreSQL |
-| **cdn-service** | File upload, OCR processing, S3 storage | PostgreSQL, AWS S3, Tesseract |
+| **cdn** | File upload, OCR processing, S3 storage | PostgreSQL, AWS S3, Tesseract |
 | **processing** | AI content analysis using Gemini, PDF generation | PostgreSQL, AWS S3, Gemini AI |
-| **quiz-service** | AI quiz/flashcard generation | PostgreSQL, AWS S3, Gemini AI |
+| **quiz** | AI quiz/flashcard generation | PostgreSQL, AWS S3, Gemini AI |
 
 ## Performance Optimizations
 
@@ -97,7 +97,7 @@ All Dockerfiles are optimized with **BuildKit cache mounts** to dramatically red
    - Reuses downloaded packages across builds
    - Reduces `npm ci` time from 170s to ~30s
 
-2. **APT Cache Mounting** (cdn-service): `--mount=type=cache,target=/var/cache/apt`
+2. **APT Cache Mounting** (cdn): `--mount=type=cache,target=/var/cache/apt`
    - Caches system packages for canvas dependencies
    - Reduces apt-get operations from 300s to ~10s
 
@@ -124,7 +124,7 @@ make docker-build
 |-----------|--------|-------|-------------|
 | Full rebuild | 560s | 150-200s | 70% faster |
 | npm ci (per service) | 170s | 30-40s | 77% faster |
-| apt-get (cdn-service) | 300s | 10-15s | 95% faster |
+| apt-get (cdn) | 300s | 10-15s | 95% faster |
 
 ## Local Development Setup
 
@@ -154,9 +154,9 @@ Create `.env` files in each service directory:
 # Copy environment templates
 cp .env.example .env
 cp apps/auth/.env.example apps/auth/.env
-cp apps/cdn-service/.env.example apps/cdn-service/.env
+cp apps/cdn/.env.example apps/cdn/.env
 cp apps/processing/.env.example apps/processing/.env
-cp apps/quiz-service/.env.example apps/quiz-service/.env
+cp apps/quiz/.env.example apps/quiz/.env
 cp apps/api-gateway/.env.example apps/api-gateway/.env
 ```
 
@@ -180,7 +180,7 @@ AUTH_JWT_SECRET=your-super-secret-key-change-in-production
 BLOCK_TIME_BETWEEN_SENDING_VERIFICATION_CODE_IN_SECONDS=60
 ```
 
-**`apps/cdn-service/.env`:**
+**`apps/cdn/.env`:**
 ```env
 PORT=3001
 NODE_ENV=development
@@ -227,7 +227,7 @@ GEMINI_API_KEY=your-gemini-api-key
 GEMINI_URL=https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
 ```
 
-**`apps/quiz-service/.env`:**
+**`apps/quiz/.env`:**
 ```env
 PORT=3004
 NODE_ENV=development
@@ -260,10 +260,10 @@ NODE_ENV=development
 GATEWAY_JWT_SECRET=your-gateway-secret-key-change-in-production
 
 # Microservice URLs (Docker internal network)
-CDN_URL=http://cdn-service:3001
+CDN_URL=http://cdn:3001
 AUTH_URL=http://auth:3002
 PROCESSING_URL=http://processing:3003
-QUIZ_SERVICE_URL=http://quiz-service:3004
+QUIZ_SERVICE_URL=http://quiz:3004
 
 # Frontend CORS Configuration
 FRONTEND_URL=http://localhost:3000
@@ -318,7 +318,7 @@ services:
 
 Each service has its own Dockerfile using **multi-stage builds** for optimization:
 
-**Example: [`apps/cdn-service/Dockerfile`](../apps/cdn-service/Dockerfile)**
+**Example: [`apps/cdn/Dockerfile`](../apps/cdn/Dockerfile)**
 
 ```dockerfile
 # Stage 1: PRUNE - Extract only needed dependencies
@@ -326,7 +326,7 @@ FROM node:20-slim AS pruner
 WORKDIR /app
 RUN npm install -g turbo
 COPY . .
-RUN turbo prune --scope=cdn-service --docker
+RUN turbo prune --scope=cdn --docker
 
 # Stage 2: BUILDER - Install deps and build
 FROM node:20-slim AS builder
@@ -339,7 +339,7 @@ RUN apt-get update && apt-get install -y \
 COPY --from=pruner /app/out/json/ .
 RUN npm ci --legacy-peer-deps
 COPY --from=pruner /app/out/full/ .
-RUN npm run build -- --filter=cdn-service
+RUN npm run build -- --filter=cdn
 
 # Stage 3: RUNNER - Minimal production image
 FROM node:20-slim AS runner
@@ -351,10 +351,10 @@ RUN apt-get update && apt-get install -y \
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nestjs
 # Copy built artifacts
-COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn-service/dist ./apps/cdn-service/dist
+COPY --from=builder --chown=nestjs:nodejs /app/apps/cdn/dist ./apps/cdn/dist
 USER nestjs
 EXPOSE 3001
-CMD ["node", "apps/cdn-service/dist/main.js"]
+CMD ["node", "apps/cdn/dist/main.js"]
 ```
 
 **Multi-Stage Benefits:**
@@ -390,7 +390,7 @@ docker-compose down
 docker-compose build
 
 # Build specific service
-docker-compose build cdn-service
+docker-compose build cdn
 
 # Build without cache (if having issues)
 docker-compose build --no-cache
@@ -402,9 +402,9 @@ docker-compose build --no-cache
  => [auth internal] load .dockerignore
  => [auth internal] load build definition from Dockerfile
  => [auth] building apps/auth...
- => [cdn-service] building apps/cdn-service...
+ => [cdn] building apps/cdn...
  => [processing] building apps/processing...
- => [quiz-service] building apps/quiz-service...
+ => [quiz] building apps/quiz...
  => [api-gateway] building apps/api-gateway...
 Successfully built student-helper-backend
 ```
@@ -419,7 +419,7 @@ docker-compose up
 docker-compose up -d
 
 # Start specific service
-docker-compose up cdn-service
+docker-compose up cdn
 ```
 
 **Startup Order:**
@@ -436,10 +436,10 @@ docker-compose ps
 
 # Expected output:
 # NAME                STATUS              PORTS
-# auth-service        Up 2 minutes        0.0.0.0:3002->3002/tcp
-# cdn-service         Up 2 minutes        0.0.0.0:3001->3001/tcp
-# processing-service  Up 2 minutes        0.0.0.0:3003->3003/tcp
-# quiz-service        Up 2 minutes        0.0.0.0:3004->3004/tcp
+# auth        Up 2 minutes        0.0.0.0:3002->3002/tcp
+# cdn         Up 2 minutes        0.0.0.0:3001->3001/tcp
+# processing  Up 2 minutes        0.0.0.0:3003->3003/tcp
+# quiz        Up 2 minutes        0.0.0.0:3004->3004/tcp
 # api-gateway         Up 2 minutes        0.0.0.0:4001->4001/tcp
 
 # Check health endpoints
@@ -467,7 +467,7 @@ curl http://localhost:4001/api/health  # Gateway
 docker-compose logs -f
 
 # Specific service
-docker-compose logs -f cdn-service
+docker-compose logs -f cdn
 
 # Last 100 lines
 docker-compose logs --tail=100 processing
@@ -486,7 +486,7 @@ docker-compose logs | grep "ERROR"
 docker-compose stop
 
 # Stop specific service
-docker-compose stop cdn-service
+docker-compose stop cdn
 
 # Stop and remove containers (keeps volumes)
 docker-compose down
@@ -570,10 +570,10 @@ docker-compose logs --tail=50 [service-name]
 **Solution:**
 ```bash
 # Verify .env file exists
-ls -la apps/cdn-service/.env
+ls -la apps/cdn/.env
 
 # Check environment variables loaded
-docker-compose exec cdn-service env | grep AWS
+docker-compose exec cdn env | grep AWS
 
 # Restart with fresh database
 docker-compose down -v
@@ -612,19 +612,19 @@ services:
 
 ```bash
 # Enter running container shell
-docker-compose exec cdn-service sh
+docker-compose exec cdn sh
 
 # Run commands inside container
-docker-compose exec cdn-service npm run test
+docker-compose exec cdn npm run test
 
 # Check environment variables
-docker-compose exec cdn-service env
+docker-compose exec cdn env
 
 # View container details
-docker inspect student-helper-backend-cdn-service-1
+docker inspect student-helper-backend-cdn-1
 
 # Check network connectivity
-docker-compose exec cdn-service ping postgres
+docker-compose exec cdn ping postgres
 
 # View Docker networks
 docker network ls
@@ -653,7 +653,7 @@ docker-compose up -d
 See main [README - Deployment Section](../README.md#-deployment-to-rendercom) for detailed Render.com setup.
 
 **Key Differences from Local:**
-- Use Render's internal URLs (e.g., `processing:3003` → `https://processing-service.onrender.com`)
+- Use Render's internal URLs (e.g., `processing:3003` → `https://processing.onrender.com`)
 - Set `DB_SSL=true` for Render PostgreSQL
 - Use Render environment variables (not `.env` files)
 - Each service deploys independently

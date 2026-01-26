@@ -15,18 +15,19 @@ export class QuizService {
   ) {}
 
   private async fetchCombinedContent(topicIds: string[]): Promise<{ content: string, count: number }> {
+    // 1. Validation & Database Lookup
     if (!topicIds || !Array.isArray(topicIds) || topicIds.length === 0) {
         this.logger.warn('fetchCombinedContent called with empty or invalid topicIds');
         throw new BadRequestException('No topic IDs provided for content generation.');
     }
 
-    // 1. Fetch from DB
     const topics = await this.topicsRepo.findByIds(topicIds);
 
     if (!topics || topics.length === 0) {
       throw new NotFoundException('Topics not found in database.');
     }
     
+    // 2. Parallel Content Retrieval (S3 Downloads)
     const downloadPromises = topics.map(async (topic) => {
         try {
             const text = await this.helpers.getTopicContent(
@@ -46,6 +47,7 @@ export class QuizService {
 
     const results = await Promise.all(downloadPromises);
     
+    // 3. Content Aggregation & Validation
     const validContents = results.filter((c): c is string => c !== null);
     const combinedContent = validContents.join('');
 
@@ -57,8 +59,10 @@ export class QuizService {
   }
 
   async generateQuiz(mode: string, topicIds: string[]) {
+    // 4. Content Preparation for AI
     const { content, count } = await this.fetchCombinedContent(topicIds);
 
+    // 5. Mode Selection & AI Generation
     if (mode === StudyMode.QUIZ) { 
       const quizJson = await this.ai.generateQuizQuestions(content);
       return { mode: 'quiz', questions: quizJson.questions };
@@ -79,6 +83,7 @@ export class QuizService {
   }
 
   async generateSummary(topicIds: string[]) {
+    // 6. Standalone Summary Generation
     const { content, count } = await this.fetchCombinedContent(topicIds);
     const summaryJson = await this.ai.generateStudySummary(content, count);
     
@@ -89,6 +94,7 @@ export class QuizService {
   }
 
   async evaluateQuiz(topicIds: string[], answers: any[]) {
+    // 7. Answer Evaluation (Context-Aware Grading)
     const { content } = await this.fetchCombinedContent(topicIds);
     const evaluationJson = await this.ai.evaluateOpenAnswers(content, answers);
     
