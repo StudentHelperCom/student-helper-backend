@@ -1,10 +1,4 @@
-.PHONY: help install build dev test clean docker-build docker-up docker-down docker-logs
-
-help: ## Show this help
-	@echo 'Usage: make <target>'
-	@echo ''
-	@echo 'Targets:'
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+.PHONY: help dcbb dcbu dcbd dcfu dcfd dcau dcad dcbp
 
 dcbb:
 	docker-compose --profile backend build
