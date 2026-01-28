@@ -2,22 +2,94 @@
 node_modules
 **/node_modules
 
-# Build outputs
+# Build outputs (rebuilt inside container)
 dist
 out
 build
 .next
 .turbo
+*.tsbuildinfo
+coverage
 
 # Environment variables (Never put these in an image!)
 .env
 .env.local
 .env.*
+!.env.example
+env/
 
 # Git history (Heavy and unnecessary)
 .git
+.gitignore
+.gitattributes
 
 # Turborepo logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
+**/test
+coverage
+.nyc_output
+
+# IDE and OS files
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Documentation (not needed in runtime)
+README.md
+**/README.md
+ARCHITECTURE.md
+DOCKER-GUIDE.md
+*.md
+!package.json
+!tsconfig*.json
+
+# Docker artifacts (no need to copy these)
+Dockerfile
+**/Dockerfile
+.dockerignore
+**/.dockerignore
+docker-compose*.yml
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.circleci
+
+# Monorepo artifacts not needed in final image
+Makefile
+
+# ==========================================
+# Service-specific exclusions
+# ==========================================
+
+# CDN Service specific
+apps/cdn-service/temp_processing/*
+apps/cdn-service/upload/*
+apps/cdn-service/cdn_temp_storage/*
+
+# Processing Service specific
+apps/auth-service/sessions
+apps/auth-service/*.pem
+apps/auth-service/*.key
+apps/auth-service/jwt-keys
+
+# Exclude other services when building specific service (optional, reduces context)
+# Note: Turbo prune will handle this, so this is just extra safety
+# apps/cdn-service/**
+# apps/auth-service/**
+# (Uncomment only if you're NOT using turbo prune)
 .turbo
 
 # IDE files
@@ -28,5 +100,5 @@ build
 .DS_Store
 Thumbs.db
 
-# Specific to your CDN service (Avoid baking temp files into the image)
-apps/cdn/temp_processing/*
+# Specific to your CDN service
+apps/cdn-service/temp_processing/*

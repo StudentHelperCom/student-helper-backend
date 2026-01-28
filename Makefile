@@ -6,46 +6,26 @@ help: ## Show this help
 	@echo 'Targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: ## Install dependencies
-	npm install --legacy-peer-deps
+dcbb:
+	docker-compose --profile backend build
 
-build: ## Build all services
-	npm run build
+dcbu:
+	docker-compose --profile backend up -d
 
-dev: ## Start development environment
-	npm run dev
+dcbd:
+	docker-compose --profile backend down
 
-test: ## Run tests
-	npm run test
+dcfu:
+	docker-compose --profile frontend up
 
-lint: ## Run linter
-	npm run lint
+dcfd:
+	docker-compose --profile frontend down
 
-format: ## Format code
-	npm run format
+dcau:
+	docker-compose --profile all up -d
 
-typecheck: ## Run type checking
-	npm run typecheck
+dcad:
+	docker-compose --profile all down
 
-clean: ## Clean build artifacts and dependencies
-	npm run clean
-	rm -rf node_modules
-
-docker-build: ## Build Docker images (optimized with BuildKit)
-	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker-compose build
-
-docker-build-fast: ## Build Docker images with all optimizations
-	@echo "🚀 Building with BuildKit optimizations..."
-	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 BUILDKIT_PROGRESS=plain docker-compose build
-
-docker-up: ## Start Docker containers
-	docker-compose up -d
-
-docker-down: ## Stop Docker containers
-	docker-compose down
-
-docker-logs: ## View Docker logs
-	docker-compose logs -f
-
-check: lint typecheck test ## Run all checks locally
-	@echo "✅ All checks passed!"
+dcbp:
+	docker-compose --profile backend push
