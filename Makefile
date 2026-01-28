@@ -16,7 +16,7 @@ dcbd:
 	docker-compose --profile backend down
 
 dcfu:
-	docker-compose --profile frontend up
+	docker-compose --profile frontend up -d
 
 dcfd:
 	docker-compose --profile frontend down
